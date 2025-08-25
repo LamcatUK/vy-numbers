@@ -1,0 +1,479 @@
+<?php
+/**
+ * VY Numbers – Admin tools
+ *
+ * @package VY_Numbers
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+/**
+ * Class VY_Numbers_Admin
+ *
+ * Provides admin tools for managing VY Numbers in WooCommerce.
+ */
+class VY_Numbers_Admin {
+
+    /**
+     * Boot hooks.
+     */
+    public static function init() {
+        add_action( 'admin_menu', array( __CLASS__, 'add_menu' ) );
+
+        // actions.
+        add_action( 'admin_post_vy_numbers_reserve', array( __CLASS__, 'handle_reserve' ) );
+        add_action( 'admin_post_vy_numbers_release', array( __CLASS__, 'handle_release' ) );
+        add_action( 'admin_post_vy_numbers_bulk', array( __CLASS__, 'handle_bulk' ) );
+    }
+
+    /**
+     * Add admin page under WooCommerce.
+     */
+    public static function add_menu() {
+        add_submenu_page(
+            'woocommerce',
+            'Numbers',
+            'Numbers',
+            'manage_woocommerce',
+            'vy-numbers',
+            array( __CLASS__, 'render_page' )
+        );
+    }
+
+    /**
+     * Render the management screen.
+     */
+    public static function render_page() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'You do not have permission to access this page.', 'vy-numbers' ) );
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_numbers';
+
+        // filters.
+        $status   = isset( $_GET['status'] ) ? sanitize_text_field( wp_unslash( $_GET['status'] ) ) : '';
+        $search   = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
+        $page     = isset( $_GET['paged'] ) ? max( 1, (int) $_GET['paged'] ) : 1;
+        $per_page = 50;
+        $offset   = ( $page - 1 ) * $per_page;
+
+        $where = array();
+        $args  = array();
+
+        if ( in_array( $status, array( 'available', 'reserved', 'sold' ), true ) ) {
+            $where[] = 'status = %s';
+            $args[]  = $status;
+        }
+
+        if ( '' !== $search ) {
+            // allow partial search; but num is fixed 4 chars, so exact helps.
+            $where[] = 'num LIKE %s';
+            $args[]  = '%' . $wpdb->esc_like( $search ) . '%';
+        }
+
+        $where_sql = '';
+        if ( ! empty( $where ) ) {
+            $where_sql = 'WHERE ' . implode( ' AND ', $where );
+        }
+
+        // total count.
+        $count_sql = "SELECT COUNT(*) FROM {$table} {$where_sql}";
+        // cache the count to avoid repeated direct DB calls when paginating/filtering.
+    	$count_cache_key = 'vy_numbers_count_' . md5( $count_sql . '|' . wp_json_encode( $args ) );
+        $total           = wp_cache_get( $count_cache_key, 'vy-numbers' );
+        if ( false === $total ) {
+            if ( empty( $args ) ) {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQLPlaceholders
+                $total = (int) $wpdb->get_var( $count_sql );
+            } else {
+                $prepared_count_sql = call_user_func_array( array( $wpdb, 'prepare' ), array_merge( array( $count_sql ), $args ) );
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQLPlaceholders
+                $total = (int) $wpdb->get_var( $prepared_count_sql );
+            }
+            wp_cache_set( $count_cache_key, $total, 'vy-numbers', HOUR_IN_SECONDS );
+        }
+
+        // rows.
+        $rows_sql = "SELECT num, status, reserved_by, reserve_expires, order_id, user_id, txn_ref, updated_at
+                     FROM {$table} {$where_sql}
+                     ORDER BY num ASC
+                     LIMIT %d OFFSET %d";
+
+        $rows_args   = $args;
+        $rows_args[] = $per_page;
+        $rows_args[] = $offset;
+
+        // cache page rows keyed by filters and page to reduce DB load while navigating pages.
+    	$rows_cache_key = 'vy_numbers_rows_' . md5( $rows_sql . '|' . wp_json_encode( $rows_args ) );
+        $rows           = wp_cache_get( $rows_cache_key, 'vy-numbers' );
+        if ( false === $rows ) {
+            $prepared_rows_sql = call_user_func_array( array( $wpdb, 'prepare' ), array_merge( array( $rows_sql ), $rows_args ) );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQLPlaceholders
+            $rows = $wpdb->get_results( $prepared_rows_sql, ARRAY_A );
+            wp_cache_set( $rows_cache_key, $rows, 'vy-numbers', HOUR_IN_SECONDS );
+        }
+
+        $base_url = admin_url( 'admin.php?page=vy-numbers' );
+        ?>
+		<div class="wrap">
+			<h1 class="wp-heading-inline">Numbers</h1>
+
+			<?php
+			if ( isset( $_GET['vy_msg'], $_GET['vy_type'] ) ) {
+				$msg  = sanitize_text_field( wp_unslash( $_GET['vy_msg'] ) );
+                $type = 'success' === $_GET['vy_type'] ? 'updated' : 'error';
+				printf(
+					'<div id="message" class="%1$s notice is-dismissible"><p>%2$s</p></div>',
+					esc_attr( $type ),
+					esc_html( $msg )
+				);
+			}
+			?>
+
+            <form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>" style="margin-top:12px;">
+                <input type="hidden" name="page" value="vy-numbers" />
+                <select name="status">
+                    <option value="">All statuses</option>
+                    <option value="available" <?php selected( $status, 'available' ); ?>>Available</option>
+                    <option value="reserved"  <?php selected( $status, 'reserved' ); ?>>Reserved</option>
+                    <option value="sold"      <?php selected( $status, 'sold' ); ?>>Sold</option>
+                </select>
+                <input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="Search number (e.g. 0427)" />
+                <button class="button">Filter</button>
+            </form>
+
+            <hr />
+
+            <h2>Single actions</h2>
+            <div style="display:flex; gap:24px; flex-wrap:wrap;">
+                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+                    <?php wp_nonce_field( 'vy_numbers_reserve' ); ?>
+                    <input type="hidden" name="action" value="vy_numbers_reserve" />
+                    <label>Reserve number:
+                        <input type="text" name="num" maxlength="4" size="6" placeholder="0001" />
+                    </label>
+                    <button class="button button-primary">Reserve</button>
+                    <p class="description">Creates an admin hold (no expiry) until released.</p>
+                </form>
+
+                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+                    <?php wp_nonce_field( 'vy_numbers_release' ); ?>
+                    <input type="hidden" name="action" value="vy_numbers_release" />
+                    <label>Release number:
+                        <input type="text" name="num" maxlength="4" size="6" placeholder="0001" />
+                    </label>
+                    <button class="button">Release</button>
+                </form>
+            </div>
+
+            <hr />
+
+            <h2>Bulk actions</h2>
+            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+                <?php wp_nonce_field( 'vy_numbers_bulk' ); ?>
+                <input type="hidden" name="action" value="vy_numbers_bulk" />
+                <p><label for="vy_bulk_numbers">Paste numbers (comma/space/newline separated). Non-4-digit tokens will be ignored.</label></p>
+                <textarea id="vy_bulk_numbers" name="numbers" rows="5" style="width:100%; max-width:680px;" placeholder="0001, 0002, 0042, 1234"></textarea>
+                <p>
+                    <label>
+                        <input type="radio" name="bulk_action" value="reserve" checked />
+                        Reserve (admin hold)
+                    </label>
+                    &nbsp;&nbsp;
+                    <label>
+                        <input type="radio" name="bulk_action" value="release" />
+                        Release to available
+                    </label>
+                </p>
+                <button class="button button-primary">Run bulk action</button>
+            </form>
+
+            <hr />
+
+            <h2>Results</h2>
+            <p><?php echo esc_html( number_format_i18n( $total ) ); ?> matching numbers.</p>
+            <table class="widefat fixed striped">
+                <thead>
+                <tr>
+                    <th>Number</th>
+                    <th>Status</th>
+                    <th>Reserved by</th>
+                    <th>Reserve expires</th>
+                    <th>Order</th>
+                    <th>User</th>
+                    <th>Txn ref</th>
+                    <th>Updated</th>
+                    <th>Actions</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php if ( empty( $rows ) ) { ?>
+                    <tr><td colspan="9">No numbers found.</td></tr>
+                <?php } else { ?>
+                    <?php foreach ( $rows as $r ) { ?>
+                        <tr>
+                            <td><code><?php echo esc_html( $r['num'] ); ?></code></td>
+                            <td><?php echo esc_html( ucfirst( $r['status'] ) ); ?></td>
+                            <td><?php echo esc_html( $r['reserved_by'] ); ?></td>
+                            <td><?php echo esc_html( $r['reserve_expires'] ); ?></td>
+                            <td>
+                                <?php
+                                if ( $r['order_id'] ) {
+                                    echo '<a href="' . esc_url( admin_url( 'post.php?post=' . (int) $r['order_id'] . '&action=edit' ) ) . '">#' . (int) $r['order_id'] . '</a>';
+                                } else {
+                                    echo '&mdash;';
+                                }
+                                ?>
+                            </td>
+                            <td>
+                                <?php
+                                if ( $r['user_id'] ) {
+                                    echo '<a href="' . esc_url( get_edit_user_link( (int) $r['user_id'] ) ) . '">' . (int) $r['user_id'] . '</a>';
+                                } else {
+                                    echo '&mdash;';
+                                }
+                                ?>
+                            </td>
+                            <td><?php echo $r['txn_ref'] ? esc_html( $r['txn_ref'] ) : '&mdash;'; ?></td>
+                            <td><?php echo esc_html( $r['updated_at'] ); ?></td>
+                            <td>
+                                <?php
+                                $n = rawurlencode( $r['num'] );
+                                if ( 'available' === $r['status'] ) {
+                                    $url = wp_nonce_url( admin_url( 'admin-post.php?action=vy_numbers_reserve&num=' . $n ), 'vy_numbers_reserve' );
+                                    echo '<a class="button" href="' . esc_url( $url ) . '">Reserve</a>';
+                                } elseif ( 'reserved' === $r['status'] ) {
+                                    $url = wp_nonce_url( admin_url( 'admin-post.php?action=vy_numbers_release&num=' . $n ), 'vy_numbers_release' );
+                                    echo '<a class="button" href="' . esc_url( $url ) . '">Release</a>';
+                                } else {
+                                    echo '&mdash;';
+                                }
+                                ?>
+                            </td>
+                        </tr>
+                    <?php } ?>
+                <?php } ?>
+                </tbody>
+            </table>
+
+            <?php
+            // pagination.
+            $total_pages = max( 1, (int) ceil( $total / $per_page ) );
+            if ( $total_pages > 1 ) {
+                // Build pagination links. Use '&paged=%#%' as the format and supply current
+                // filter args via 'add_args' so paginate_links builds safe hrefs without
+                // producing HTML-encoded ampersands like "#038;paged=...".
+                $base = esc_url_raw( add_query_arg( 'paged', '%#%', $base_url ) );
+
+                $add_args = array();
+                if ( '' !== $search ) {
+                    $add_args['s'] = $search;
+                }
+                if ( '' !== $status ) {
+                    $add_args['status'] = $status;
+                }
+
+                echo '<div class="tablenav"><div class="tablenav-pages">';
+                echo wp_kses_post(
+                    paginate_links(
+                        array(
+                            'base'      => $base,
+                            'format'    => '&paged=%#%',
+                            'prev_text' => '&laquo;',
+                            'next_text' => '&raquo;',
+                            'current'   => $page,
+                            'total'     => $total_pages,
+                            'add_args'  => $add_args,
+                        )
+                    )
+                );
+                echo '</div></div>';
+            }
+            ?>
+        </div>
+        <?php
+    }
+
+    /**
+     * Reserve a single number (admin hold, no expiry).
+     */
+    public static function handle_reserve() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'Permission denied.', 'vy-numbers' ) );
+        }
+        check_admin_referer( 'vy_numbers_reserve' );
+
+        $num = isset( $_REQUEST['num'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['num'] ) ) : '';
+        if ( ! self::is_valid_num( $num ) ) {
+            self::redirect_with_msg( 'Invalid number. Use 0001–5000.', 'error' );
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_numbers';
+
+        // only reserve if currently available.
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$table}
+                 SET status='reserved', reserved_by=NULL, reserve_expires=NULL
+                 WHERE num=%s AND status='available'",
+                $num
+            )
+        );
+
+        if ( 1 === $updated ) {
+            self::redirect_with_msg( 'Reserved ' . $num . '.', 'success' );
+        }
+
+        self::redirect_with_msg( 'Could not reserve. It may already be reserved or sold.', 'error' );
+    }
+
+    /**
+     * Release a single number back to available.
+     */
+    public static function handle_release() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'Permission denied.', 'vy-numbers' ) );
+        }
+        check_admin_referer( 'vy_numbers_release' );
+
+        $num = isset( $_REQUEST['num'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['num'] ) ) : '';
+        if ( ! self::is_valid_num( $num ) ) {
+            self::redirect_with_msg( 'Invalid number. Use 0001–5000.', 'error' );
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_numbers';
+
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$table}
+                 SET status='available', reserved_by=NULL, reserve_expires=NULL, order_id=NULL, user_id=NULL, txn_ref=NULL
+                 WHERE num=%s AND status='reserved'",
+                $num
+            )
+        );
+
+        if ( 1 === $updated ) {
+            self::redirect_with_msg( 'Released ' . $num . '.', 'success' );
+        }
+
+        self::redirect_with_msg( 'Nothing to release, or number is sold.', 'error' );
+    }
+
+    /**
+     * Bulk reserve or release via textarea.
+     */
+    public static function handle_bulk() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'Permission denied.', 'vy-numbers' ) );
+        }
+        check_admin_referer( 'vy_numbers_bulk' );
+
+        $numbers_raw = isset( $_POST['numbers'] ) ? sanitize_textarea_field( wp_unslash( $_POST['numbers'] ) ) : '';
+        $action      = isset( $_POST['bulk_action'] ) ? sanitize_text_field( wp_unslash( $_POST['bulk_action'] ) ) : 'reserve';
+
+        $nums = self::parse_numbers( $numbers_raw );
+        if ( empty( $nums ) ) {
+            self::redirect_with_msg( 'No valid 4-digit numbers found.', 'error' );
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_numbers';
+
+        $ok = 0;
+        foreach ( $nums as $n ) {
+            if ( 'release' === $action ) {
+                $updated = $wpdb->query(
+                    $wpdb->prepare(
+                        "UPDATE {$table}
+                         SET status='available', reserved_by=NULL, reserve_expires=NULL, order_id=NULL, user_id=NULL, txn_ref=NULL
+                         WHERE num=%s AND status='reserved'",
+                        $n
+                    )
+                );
+            } else {
+                $updated = $wpdb->query(
+                    $wpdb->prepare(
+                        "UPDATE {$table}
+                         SET status='reserved', reserved_by=NULL, reserve_expires=NULL
+                         WHERE num=%s AND status='available'",
+                        $n
+                    )
+                );
+            }
+            if ( 1 === (int) $updated ) {
+                ++$ok;
+            }
+        }
+
+        $msg = 'release' === $action
+            ? 'Released ' . $ok . ' numbers.'
+            : 'Reserved ' . $ok . ' numbers.';
+        self::redirect_with_msg( $msg, 'success' );
+    }
+
+    /**
+     * Check if a number is valid (0001–5000).
+     *
+     * @param string $num The number to validate.
+     * @return bool True if valid, false otherwise.
+     */
+    protected static function is_valid_num( $num ) {
+        if ( ! preg_match( '/^\d{4}$/', $num ) ) {
+            return false;
+        }
+        $i = (int) $num;
+        return $i >= 1 && $i <= 5000;
+    }
+
+    /**
+     * Parse a blob of text and extract valid 4-digit numbers (0001–5000).
+     *
+     * @param string $blob The. input text containing numbers.
+     * @return array Array of valid 4-digit numbers as strings.
+     */
+    protected static function parse_numbers( $blob ) {
+        $out   = array();
+        $parts = preg_split( '/[\s,;]+/', (string) $blob );
+        foreach ( $parts as $p ) {
+            $p = trim( $p );
+            if ( '' === $p ) {
+                continue;
+            }
+            // accept 1–4 digits and pad left.
+            if ( preg_match( '/^\d{1,4}$/', $p ) ) {
+                $n = sprintf( '%04d', (int) $p );
+                if ( self::is_valid_num( $n ) ) {
+                    $out[ $n ] = true;
+                }
+            }
+        }
+        return array_keys( $out );
+    }
+
+    /**
+     * Redirect to the admin numbers page with a message.
+     *
+     * @param string $message The message to display.
+     * @param string $type    The type of message ('success' or 'error').
+     */
+    protected static function redirect_with_msg( $message, $type ) {
+        $url = add_query_arg(
+            array(
+                'page'    => 'vy-numbers',
+                'vy_msg'  => rawurlencode( $message ),
+                'vy_type' => 'success' === $type ? 'success' : 'error',
+            ),
+            admin_url( 'admin.php' )
+        );
+        wp_safe_redirect( $url );
+        exit;
+    }
+}
+
+// boot it.
+VY_Numbers_Admin::init();

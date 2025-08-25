@@ -1,0 +1,100 @@
+<?php
+/**
+ * VY Numbers – REST API
+ *
+ * @package VY_Numbers
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+/**
+ * Handles REST API endpoints for VY Numbers plugin.
+ */
+class VY_Numbers_REST {
+
+    /**
+     * Register routes.
+     */
+    public static function init() {
+        add_action( 'rest_api_init', array( __CLASS__, 'register_routes' ) );
+    }
+
+    /**
+     * Define /vy/v1/number/{num} endpoint.
+     */
+    public static function register_routes() {
+        register_rest_route(
+            'vy/v1',
+            '/number/(?P<num>\d{4})',
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( __CLASS__, 'check_number' ),
+                'permission_callback' => '__return_true',
+            )
+        );
+    }
+
+    /**
+     * Callback for availability check.
+     *
+     * @param WP_REST_Request $request The request.
+     * @return WP_REST_Response
+     */
+    public static function check_number( WP_REST_Request $request ) {
+        global $wpdb;
+
+        $num   = $request->get_param( 'num' );
+        $table = $wpdb->prefix . 'vy_numbers';
+
+        // make sure num is four digits between 0001 and 5000.
+        if ( ! preg_match( '/^\d{4}$/', $num ) || (int) $num < 1 || (int) $num > 5000 ) {
+            return new WP_REST_Response(
+                array(
+                    'status'  => 'invalid',
+                    'message' => 'Number must be between 0001 and 5000.',
+                ),
+                400
+            );
+        }
+
+        // Table names cannot be used with placeholders in $wpdb->prepare().
+        // Escape the table name and inject it via sprintf, then prepare the value placeholder.
+        // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery
+        $safe_table = esc_sql( $table );
+        $sql        = sprintf( 'SELECT status, reserve_expires FROM `%s` WHERE num = %%s LIMIT 1', $safe_table );
+        $row        = $wpdb->get_row( $wpdb->prepare( $sql, $num ), ARRAY_A );
+        // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery
+
+        if ( ! $row ) {
+            return new WP_REST_Response(
+                array(
+                    'status'  => 'not_found',
+                    'message' => 'Number not found in table.',
+                ),
+                404
+            );
+        }
+
+        // if reserved but expired, treat as available.
+        if (
+            'reserved' === $row['status']
+            && $row['reserve_expires']
+            && strtotime( $row['reserve_expires'] ) < time()
+        ) {
+            $row['status'] = 'available';
+        }
+
+        return new WP_REST_Response(
+            array(
+                'status'          => $row['status'],
+                'reserve_expires' => $row['reserve_expires'],
+            ),
+            200
+        );
+    }
+}
+
+// boot it.
+VY_Numbers_REST::init();
