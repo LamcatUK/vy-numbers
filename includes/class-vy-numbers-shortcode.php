@@ -125,6 +125,11 @@ class VY_Numbers_Shortcode {
                         setStatus( 'Number ' + num + ' is available.', true );
                         if(hidden) hidden.value = num;
                         if(btn) btn.disabled = false;
+                    } else if (data && data.status === 'reserved' && data.message) {
+                        clearInputsAndFocus();
+                        setStatus( data.message, false );
+                        if(hidden) hidden.value = '';
+                        if(btn) btn.disabled = true;
                     } else {
                         clearInputsAndFocus();
                         setStatus( 'Number ' + num + ' is taken.', false );

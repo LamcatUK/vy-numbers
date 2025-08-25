@@ -63,7 +63,7 @@ class VY_Numbers_REST {
         // Escape the table name and inject it via sprintf, then prepare the value placeholder.
         // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery
         $safe_table = esc_sql( $table );
-        $sql        = sprintf( 'SELECT status, reserve_expires FROM `%s` WHERE num = %%s LIMIT 1', $safe_table );
+        $sql        = sprintf( 'SELECT status, reserve_expires, nickname FROM `%s` WHERE num = %%s LIMIT 1', $safe_table );
         $row        = $wpdb->get_row( $wpdb->prepare( $sql, $num ), ARRAY_A );
         // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery
 
@@ -84,6 +84,17 @@ class VY_Numbers_REST {
             && strtotime( $row['reserve_expires'] ) < time()
         ) {
             $row['status'] = 'available';
+        }
+
+        // Custom logic: if reserved and nickname exists, return custom message.
+        if ( 'reserved' === $row['status'] && ! empty( $row['nickname'] ) ) {
+            return new WP_REST_Response(
+                array(
+                    'status'  => 'reserved',
+                    'message' => 'Number ' . $num . ' is ' . $row['nickname'],
+                ),
+                200
+            );
         }
 
         return new WP_REST_Response(

@@ -97,10 +97,10 @@ class VY_Numbers_Admin {
         }
 
         // rows.
-        $rows_sql = "SELECT num, status, reserved_by, reserve_expires, order_id, user_id, txn_ref, updated_at
-                     FROM {$table} {$where_sql}
-                     ORDER BY num ASC
-                     LIMIT %d OFFSET %d";
+    $rows_sql = "SELECT num, status, reserved_by, reserve_expires, order_id, user_id, txn_ref, association, nickname, category, country, significance, updated_at
+             FROM {$table} {$where_sql}
+             ORDER BY num ASC
+             LIMIT %d OFFSET %d";
 
         $rows_args   = $args;
         $rows_args[] = $per_page;
@@ -113,7 +113,7 @@ class VY_Numbers_Admin {
             $prepared_rows_sql = call_user_func_array( array( $wpdb, 'prepare' ), array_merge( array( $rows_sql ), $rows_args ) );
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQLPlaceholders
             $rows = $wpdb->get_results( $prepared_rows_sql, ARRAY_A );
-            wp_cache_set( $rows_cache_key, $rows, 'vy-numbers', HOUR_IN_SECONDS );
+            wp_cache_set( $rows_cache_key, $rows, 'vy-numbers' , HOUR_IN_SECONDS );
         }
 
         $base_url = admin_url( 'admin.php?page=vy-numbers' );
@@ -172,11 +172,13 @@ class VY_Numbers_Admin {
             <hr />
 
             <h2>Bulk actions</h2>
-            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
                 <?php wp_nonce_field( 'vy_numbers_bulk' ); ?>
                 <input type="hidden" name="action" value="vy_numbers_bulk" />
                 <p><label for="vy_bulk_numbers">Paste numbers (comma/space/newline separated). Non-4-digit tokens will be ignored.</label></p>
                 <textarea id="vy_bulk_numbers" name="numbers" rows="5" style="width:100%; max-width:680px;" placeholder="0001, 0002, 0042, 1234"></textarea>
+                <p><label for="vy_bulk_csv">Or upload CSV (founder number, association, nickname, category, country, significance):</label></p>
+                <input type="file" id="vy_bulk_csv" name="vy_bulk_csv" accept=".csv" />
                 <p>
                     <label>
                         <input type="radio" name="bulk_action" value="reserve" checked />
@@ -186,6 +188,11 @@ class VY_Numbers_Admin {
                     <label>
                         <input type="radio" name="bulk_action" value="release" />
                         Release to available
+                    </label>
+                    &nbsp;&nbsp;
+                    <label>
+                        <input type="radio" name="bulk_action" value="csv_upload" />
+                        Upload CSV (set to reserved)
                     </label>
                 </p>
                 <button class="button button-primary">Run bulk action</button>
@@ -205,13 +212,18 @@ class VY_Numbers_Admin {
                     <th>Order</th>
                     <th>User</th>
                     <th>Txn ref</th>
+                    <th>Association</th>
+                    <th>Nickname</th>
+                    <th>Category</th>
+                    <th>Country</th>
+                    <th>Significance</th>
                     <th>Updated</th>
                     <th>Actions</th>
                 </tr>
                 </thead>
                 <tbody>
                 <?php if ( empty( $rows ) ) { ?>
-                    <tr><td colspan="9">No numbers found.</td></tr>
+                    <tr><td colspan="14">No numbers found.</td></tr>
                 <?php } else { ?>
                     <?php foreach ( $rows as $r ) { ?>
                         <tr>
@@ -238,6 +250,11 @@ class VY_Numbers_Admin {
                                 ?>
                             </td>
                             <td><?php echo $r['txn_ref'] ? esc_html( $r['txn_ref'] ) : '&mdash;'; ?></td>
+                            <td><?php echo esc_html( $r['association'] ); ?></td>
+                            <td><?php echo esc_html( $r['nickname'] ); ?></td>
+                            <td><?php echo esc_html( $r['category'] ); ?></td>
+                            <td><?php echo esc_html( $r['country'] ); ?></td>
+                            <td><?php echo esc_html( $r['significance'] ); ?></td>
                             <td><?php echo esc_html( $r['updated_at'] ); ?></td>
                             <td>
                                 <?php
@@ -376,6 +393,74 @@ class VY_Numbers_Admin {
         $numbers_raw = isset( $_POST['numbers'] ) ? sanitize_textarea_field( wp_unslash( $_POST['numbers'] ) ) : '';
         $action      = isset( $_POST['bulk_action'] ) ? sanitize_text_field( wp_unslash( $_POST['bulk_action'] ) ) : 'reserve';
 
+        // CSV upload bulk action
+        if ( $action === 'csv_upload' && ! empty( $_FILES['vy_bulk_csv']['tmp_name'] ) ) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'vy_numbers';
+            $csv_file = $_FILES['vy_bulk_csv']['tmp_name'];
+            if ( ! is_readable( $csv_file ) ) {
+                error_log('CSV file not readable: ' . $csv_file);
+                self::redirect_with_msg( 'CSV file could not be read.', 'error' );
+            }
+            $handle = fopen( $csv_file, 'r' );
+            if ( ! $handle ) {
+                error_log('Failed to open CSV file: ' . $csv_file);
+                self::redirect_with_msg( 'Could not open CSV file.', 'error' );
+            }
+            $ok = 0;
+            $duplicates = array();
+            $seen = array();
+            $row_num = 0;
+            while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+                ++$row_num;
+                // Skip header row
+                if ( $row_num === 1 ) {
+                    continue;
+                }
+                // Expect: founder number, association, nickname, category, country, significance
+                if ( count( $row ) < 6 ) {
+                    error_log('CSV row ' . $row_num . ' has insufficient columns: ' . print_r($row, true));
+                    continue;
+                }
+                $num_raw = trim( $row[0] );
+                $num = str_pad( $num_raw, 4, '0', STR_PAD_LEFT );
+                if ( ! self::is_valid_num( $num ) ) {
+                    error_log('CSV row ' . $row_num . ' invalid founder number: ' . $num_raw);
+                    continue;
+                }
+                if ( isset( $seen[$num] ) ) {
+                    $duplicates[] = array('row' => $row_num, 'num' => $num_raw);
+                    continue;
+                }
+                $seen[$num] = true;
+                $association = sanitize_text_field( $row[1] );
+                $nickname    = sanitize_text_field( $row[2] );
+                $category    = sanitize_text_field( $row[3] );
+                $country     = sanitize_text_field( $row[4] );
+                $significance= sanitize_textarea_field( $row[5] );
+                $updated = $wpdb->query( $wpdb->prepare(
+                    "UPDATE {$table} SET status='reserved', reserved_by=NULL, reserve_expires=NULL, association=%s, nickname=%s, category=%s, country=%s, significance=%s WHERE num=%s",
+                    $association, $nickname, $category, $country, $significance, $num
+                ) );
+                if ( false === $updated ) {
+                    error_log('CSV row ' . $row_num . ' DB update failed for number: ' . $num);
+                }
+                if ( 1 === (int) $updated ) {
+                    ++$ok;
+                }
+            }
+            fclose( $handle );
+            $msg = 'CSV upload: Reserved and updated ' . $ok . ' numbers.';
+            if ( ! empty( $duplicates ) ) {
+                $msg .= ' Duplicates skipped: ';
+                foreach ( $duplicates as $dup ) {
+                    $msg .= 'Row ' . $dup['row'] . ' (number ' . esc_html( $dup['num'] ) . '); ';
+                }
+            }
+            self::redirect_with_msg( $msg, 'success' );
+            exit;
+        }
+
         $nums = self::parse_numbers( $numbers_raw );
         if ( empty( $nums ) ) {
             self::redirect_with_msg( 'No valid 4-digit numbers found.', 'error' );
@@ -417,17 +502,14 @@ class VY_Numbers_Admin {
     }
 
     /**
-     * Check if a number is valid (0001–5000).
+     * Check if a number is valid (1–4999, zero-padded to 4 digits).
      *
-     * @param string $num The number to validate.
+     * @param string $num The number to validate (can be zero-padded or not).
      * @return bool True if valid, false otherwise.
      */
     protected static function is_valid_num( $num ) {
-        if ( ! preg_match( '/^\d{4}$/', $num ) ) {
-            return false;
-        }
-        $i = (int) $num;
-        return $i >= 1 && $i <= 5000;
+        $i = (int) ltrim( $num, '0' );
+        return $i >= 1 && $i <= 4999;
     }
 
     /**
