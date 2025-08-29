@@ -26,6 +26,7 @@ class VY_Numbers_Admin {
         add_action( 'admin_post_vy_numbers_reserve', array( __CLASS__, 'handle_reserve' ) );
         add_action( 'admin_post_vy_numbers_release', array( __CLASS__, 'handle_release' ) );
         add_action( 'admin_post_vy_numbers_bulk', array( __CLASS__, 'handle_bulk' ) );
+        add_action( 'admin_post_vy_numbers_reinitialize', array( __CLASS__, 'handle_reinitialize' ) );
     }
 
     /**
@@ -97,7 +98,7 @@ class VY_Numbers_Admin {
         }
 
         // rows.
-    $rows_sql = "SELECT num, status, reserved_by, reserve_expires, order_id, user_id, txn_ref, association, nickname, category, country, significance, updated_at
+        $rows_sql = "SELECT num, status, reserved_by, reserve_expires, order_id, user_id, txn_ref, association, nickname, category, country, significance, updated_at
              FROM {$table} {$where_sql}
              ORDER BY num ASC
              LIMIT %d OFFSET %d";
@@ -113,7 +114,7 @@ class VY_Numbers_Admin {
             $prepared_rows_sql = call_user_func_array( array( $wpdb, 'prepare' ), array_merge( array( $rows_sql ), $rows_args ) );
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQLPlaceholders
             $rows = $wpdb->get_results( $prepared_rows_sql, ARRAY_A );
-            wp_cache_set( $rows_cache_key, $rows, 'vy-numbers' , HOUR_IN_SECONDS );
+            wp_cache_set( $rows_cache_key, $rows, 'vy-numbers', HOUR_IN_SECONDS );
         }
 
         $base_url = admin_url( 'admin.php?page=vy-numbers' );
@@ -144,6 +145,17 @@ class VY_Numbers_Admin {
                 <input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="Search number (e.g. 0427)" />
                 <button class="button">Filter</button>
             </form>
+
+            <!-- Danger Zone: reinitialize all numbers -->
+            <div style="margin-top:18px;padding:12px;border-left:4px solid #b00;background:#fff6f6;">
+                <h3 style="color:#b00;margin-top:0;">Danger Zone</h3>
+                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" onsubmit="return confirm('WARNING: This will reset ALL numbers to available and clear reservations and related metadata. This action cannot be undone. Proceed?');">
+                    <?php wp_nonce_field( 'vy_numbers_reinitialize' ); ?>
+                    <input type="hidden" name="action" value="vy_numbers_reinitialize" />
+                    <button class="button" style="background:#b00;color:#fff;border-color:#b00;">Reinitialize All Numbers</button>
+                    <p class="description" style="color:#b00;margin:6px 0 0;">Sets every number to <code>available</code> and clears reservations, orders, user assignments and metadata. This cannot be undone.</p>
+                </form>
+            </div>
 
             <hr />
 
@@ -393,57 +405,67 @@ class VY_Numbers_Admin {
         $numbers_raw = isset( $_POST['numbers'] ) ? sanitize_textarea_field( wp_unslash( $_POST['numbers'] ) ) : '';
         $action      = isset( $_POST['bulk_action'] ) ? sanitize_text_field( wp_unslash( $_POST['bulk_action'] ) ) : 'reserve';
 
-        // CSV upload bulk action
-        if ( $action === 'csv_upload' && ! empty( $_FILES['vy_bulk_csv']['tmp_name'] ) ) {
+        // CSV upload bulk action.
+        if ( 'csv_upload' === $action && ! empty( $_FILES['vy_bulk_csv']['tmp_name'] ) ) {
             global $wpdb;
-            $table = $wpdb->prefix . 'vy_numbers';
+            $table    = $wpdb->prefix . 'vy_numbers';
             $csv_file = $_FILES['vy_bulk_csv']['tmp_name'];
             if ( ! is_readable( $csv_file ) ) {
-                error_log('CSV file not readable: ' . $csv_file);
+                error_log( 'CSV file not readable: ' . $csv_file );
                 self::redirect_with_msg( 'CSV file could not be read.', 'error' );
             }
             $handle = fopen( $csv_file, 'r' );
             if ( ! $handle ) {
-                error_log('Failed to open CSV file: ' . $csv_file);
+                error_log( 'Failed to open CSV file: ' . $csv_file );
                 self::redirect_with_msg( 'Could not open CSV file.', 'error' );
             }
-            $ok = 0;
+            $ok         = 0;
             $duplicates = array();
-            $seen = array();
-            $row_num = 0;
+            $seen       = array();
+            $row_num    = 0;
             while ( ( $row = fgetcsv( $handle ) ) !== false ) {
                 ++$row_num;
-                // Skip header row
-                if ( $row_num === 1 ) {
+                // Skip header row.
+                if ( 1 === $row_num ) {
                     continue;
                 }
-                // Expect: founder number, association, nickname, category, country, significance
+                // Expect: founder number, association, nickname, category, country, significance.
                 if ( count( $row ) < 6 ) {
-                    error_log('CSV row ' . $row_num . ' has insufficient columns: ' . print_r($row, true));
+                    error_log( 'CSV row ' . $row_num . ' has insufficient columns: ' . print_r( $row, true ) );
                     continue;
                 }
                 $num_raw = trim( $row[0] );
-                $num = str_pad( $num_raw, 4, '0', STR_PAD_LEFT );
+                $num     = str_pad( $num_raw, 4, '0', STR_PAD_LEFT );
                 if ( ! self::is_valid_num( $num ) ) {
-                    error_log('CSV row ' . $row_num . ' invalid founder number: ' . $num_raw);
+                    error_log( 'CSV row ' . $row_num . ' invalid founder number: ' . $num_raw );
                     continue;
                 }
-                if ( isset( $seen[$num] ) ) {
-                    $duplicates[] = array('row' => $row_num, 'num' => $num_raw);
+                if ( isset( $seen[ $num ] ) ) {
+                    $duplicates[] = array(
+                        'row' => $row_num,
+                        'num' => $num_raw,
+                    );
                     continue;
                 }
-                $seen[$num] = true;
-                $association = sanitize_text_field( $row[1] );
-                $nickname    = sanitize_text_field( $row[2] );
-                $category    = sanitize_text_field( $row[3] );
-                $country     = sanitize_text_field( $row[4] );
-                $significance= sanitize_textarea_field( $row[5] );
-                $updated = $wpdb->query( $wpdb->prepare(
-                    "UPDATE {$table} SET status='reserved', reserved_by=NULL, reserve_expires=NULL, association=%s, nickname=%s, category=%s, country=%s, significance=%s WHERE num=%s",
-                    $association, $nickname, $category, $country, $significance, $num
-                ) );
+                $seen[ $num ] = true;
+                $association  = sanitize_text_field( $row[1] );
+                $nickname     = sanitize_text_field( $row[2] );
+                $category     = sanitize_text_field( $row[3] );
+                $country      = sanitize_text_field( $row[4] );
+                $significance = sanitize_textarea_field( $row[5] );
+                $updated      = $wpdb->query(
+                    $wpdb->prepare(
+                        "UPDATE {$table} SET status='reserved', reserved_by=NULL, reserve_expires=NULL, association=%s, nickname=%s, category=%s, country=%s, significance=%s WHERE num=%s",
+                        $association,
+                        $nickname,
+                        $category,
+                        $country,
+                        $significance,
+                        $num
+                    )
+                );
                 if ( false === $updated ) {
-                    error_log('CSV row ' . $row_num . ' DB update failed for number: ' . $num);
+                    error_log( 'CSV row ' . $row_num . ' DB update failed for number: ' . $num );
                 }
                 if ( 1 === (int) $updated ) {
                     ++$ok;
@@ -499,6 +521,32 @@ class VY_Numbers_Admin {
             ? 'Released ' . $ok . ' numbers.'
             : 'Reserved ' . $ok . ' numbers.';
         self::redirect_with_msg( $msg, 'success' );
+    }
+
+    /**
+     * Reinitialize all numbers to available and clear related fields.
+     */
+    public static function handle_reinitialize() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'Permission denied.', 'vy-numbers' ) );
+        }
+        check_admin_referer( 'vy_numbers_reinitialize' );
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_numbers';
+
+        // Reset all numbers to available and clear reservation/order/user fields.
+        $sql = "UPDATE {$table} SET status='available', reserved_by=NULL, reserve_expires=NULL, order_id=NULL, user_id=NULL, txn_ref=NULL, association='', nickname='', category='', country='', significance='', updated_at=NOW()";
+        $res = $wpdb->query( $sql );
+
+        if ( false === $res ) {
+            self::redirect_with_msg( 'Database error while reinitializing numbers.', 'error' );
+        }
+
+        // Clear cache entries the list uses. A full cache flush is simplest here.
+        wp_cache_flush();
+
+        self::redirect_with_msg( 'All numbers have been reinitialized.', 'success' );
     }
 
     /**
