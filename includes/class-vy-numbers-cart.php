@@ -10,6 +10,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // phpcs:disable WordPress.DB.*
+
+// phpcs:disable Generic.PHP.NoSilencedErrors.Discouraged
+
+
 /**
  * Handles WooCommerce cart and checkout logic for VY Numbers.
  *
@@ -50,12 +54,11 @@ class VY_Numbers_Cart {
         add_action( 'woocommerce_order_status_failed', array( __CLASS__, 'release_on_order_fail_or_cancel' ), 10, 1 );
         add_action( 'woocommerce_order_status_cancelled', array( __CLASS__, 'release_on_order_fail_or_cancel' ), 10, 1 );
 
-		// send founder flow straight to checkout
+		// send founder flow straight to checkout.
 		add_filter( 'woocommerce_add_to_cart_redirect', array( 'VY_Numbers_Cart', 'redirect_to_checkout' ), 99 );
 
-		// hide the default "added to cart" notice for this flow
+		// hide the default "added to cart" notice for this flow.
 		add_filter( 'wc_add_to_cart_message_html', array( 'VY_Numbers_Cart', 'suppress_added_notice' ), 10, 3 );
-
     }
 
     /**
@@ -424,7 +427,6 @@ class VY_Numbers_Cart {
         }
         return $message;
     }
-
 }
 // phpcs:enable
 

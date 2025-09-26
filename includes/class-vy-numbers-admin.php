@@ -547,9 +547,9 @@ class VY_Numbers_Admin {
         $wpdb->query( "TRUNCATE TABLE {$table}" );
 
         // Reseed the table with numbers from 0001 to 9999.
-        $values = [];
+        $values = array();
         for ( $i = 1; $i <= 9999; $i++ ) {
-            $num = sprintf( '%04d', $i );
+            $num      = sprintf( '%04d', $i );
             $values[] = $wpdb->prepare( '(%s, %s)', $num, 'available' );
         }
 
