@@ -26,8 +26,8 @@ class VY_Numbers_Cart {
      */
     public static function init() {
 
-		// replace any existing founder number in the cart with the new one.
-		add_filter( 'woocommerce_add_to_cart_validation', array( __CLASS__, 'replace_existing_founder' ), 20, 3 );
+		// Disable the replace_existing_founder filter to allow multiple unique numbers in the cart.
+        // add_filter( 'woocommerce_add_to_cart_validation', array( __CLASS__, 'replace_existing_founder' ), 20, 3 );
 
 		// belt-and-braces: always force quantity = 1 when a founder number is added.
 		add_filter( 'woocommerce_add_to_cart_quantity', array( __CLASS__, 'force_quantity_one' ), 10, 2 );
@@ -147,27 +147,21 @@ class VY_Numbers_Cart {
     }
 
     /**
-     * Prevent duplicate numbers within the same cart.
+     * Allow multiple unique numbers within the same cart.
      */
     public static function guard_duplicates() {
+        // No duplicate-checking logic; allow all unique numbers.
         if ( empty( WC()->cart ) ) {
             return;
         }
-
-        $seen = array();
 
         foreach ( WC()->cart->get_cart() as $key => $item ) {
             if ( empty( $item['vy_num'] ) ) {
                 continue;
             }
 
-            $n = $item['vy_num'];
-            if ( isset( $seen[ $n ] ) ) {
-                WC()->cart->remove_cart_item( $key );
-                wc_add_notice( 'Duplicate number removed from your basket.', 'notice' );
-            } else {
-                $seen[ $n ] = true;
-            }
+            // Ensure each cart item with a unique vy_num remains.
+            // No removal of duplicates.
         }
     }
 

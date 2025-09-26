@@ -2,7 +2,7 @@
 /**
  * Plugin Name: VY Numbers
  * Description: Reserve and sell numbers (0001–9999) through WooCommerce.
- * Version:     1.0.1
+ * Version:     1.0.2
  * Author:      Lamcat - DS
  *
  * @package     VY_Numbers
