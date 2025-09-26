@@ -70,7 +70,7 @@ class VY_Numbers_Shortcode {
 .vy-num-picker__inputs{display:flex;gap:.5rem}
 .vy-num-picker__input{width:3ch;max-width:3ch;text-align:center;font-size:2rem;line-height:1;padding:.4rem .2rem;border:1px solid #ccc;border-radius:.375rem}
 .vy-num-picker__input:focus{outline:2px solid #0aaee0;outline-offset:1px}
-.vy-num-picker__status{min-height:1.25rem;font-size:.95rem;opacity:.9}
+.vy-num-picker__status{min-height:1.25rem;font-size:1.2rem;opacity:.9;font-weight:bold;}
 .vy-num-picker__status--ok{color:#2e7d32}
 .vy-num-picker__status--warn{color:#d32f2f}
 .vy-num-picker__btn[disabled]{opacity:.5;pointer-events:none}
