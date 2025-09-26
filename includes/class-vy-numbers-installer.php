@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class VY_Numbers_Installer {
 
-    const DB_VERSION = '1.0.0';
+    const DB_VERSION = '1.0.1';
 
     /**
      * Run on plugin activation.
@@ -54,8 +54,8 @@ class VY_Numbers_Installer {
 
         if ( 0 === $exists ) {
             // Use $wpdb->insert for each row so PHPCS and DB escaping are handled correctly.
-            // Executed only on install; inserting 5000 rows is acceptable for setup.
-            for ( $i = 1; $i <= 5000; $i++ ) {
+            // Executed only on install; inserting 9999 rows is acceptable for setup.
+            for ( $i = 1; $i <= 9999; $i++ ) {
                 $num = sprintf( '%04d', $i );
                 $wpdb->insert(
                     $table,
@@ -86,6 +86,30 @@ class VY_Numbers_Installer {
         $current = get_option( 'vy_numbers_db_version' );
         if ( self::DB_VERSION !== $current ) {
             self::install();
+        }
+    }
+
+    /**
+     * Reinitialize the numbers table.
+     */
+    public static function reinitialize_numbers() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_numbers';
+
+        // Truncate the table to remove all existing rows.
+        $wpdb->query( "TRUNCATE TABLE {$table}" );
+
+        // Reseed the table with numbers from 0001 to 9999.
+        for ( $i = 1; $i <= 9999; $i++ ) {
+            $num = sprintf( '%04d', $i );
+            $wpdb->insert(
+                $table,
+                array(
+                    'num'    => $num,
+                    'status' => 'available',
+                ),
+                array( '%s', '%s' )
+            );
         }
     }
 }

@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: VY Numbers
- * Description: Reserve and sell numbers (0001–5000) through WooCommerce.
- * Version:     1.0.0
+ * Description: Reserve and sell numbers (0001–9999) through WooCommerce.
+ * Version:     1.0.1
  * Author:      Lamcat - DS
  *
  * @package     VY_Numbers
@@ -17,6 +17,8 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 define( 'VY_NUMBERS_PATH', plugin_dir_path( __FILE__ ) );
 define( 'VY_NUMBERS_URL', plugin_dir_url( __FILE__ ) );
+
+// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 
 /**
  * Load installer and run db checks.

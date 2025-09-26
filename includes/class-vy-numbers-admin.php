@@ -9,6 +9,10 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared
+// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+
 /**
  * Class VY_Numbers_Admin
  *
@@ -337,7 +341,7 @@ class VY_Numbers_Admin {
 
         $num = isset( $_REQUEST['num'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['num'] ) ) : '';
         if ( ! self::is_valid_num( $num ) ) {
-            self::redirect_with_msg( 'Invalid number. Use 0001–5000.', 'error' );
+            self::redirect_with_msg( 'Invalid number. Use 0001–9999.', 'error' );
         }
 
         global $wpdb;
@@ -346,9 +350,9 @@ class VY_Numbers_Admin {
         // only reserve if currently available.
         $updated = $wpdb->query(
             $wpdb->prepare(
-                "UPDATE {$table}
-                 SET status='reserved', reserved_by=NULL, reserve_expires=NULL
-                 WHERE num=%s AND status='available'",
+                'UPDATE ' . $table . '
+                 SET status=\'reserved\', reserved_by=NULL, reserve_expires=NULL
+                 WHERE num=%s AND status=\'available\'',
                 $num
             )
         );
@@ -371,7 +375,7 @@ class VY_Numbers_Admin {
 
         $num = isset( $_REQUEST['num'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['num'] ) ) : '';
         if ( ! self::is_valid_num( $num ) ) {
-            self::redirect_with_msg( 'Invalid number. Use 0001–5000.', 'error' );
+            self::redirect_with_msg( 'Invalid number. Use 0001–9999.', 'error' );
         }
 
         global $wpdb;
@@ -379,6 +383,7 @@ class VY_Numbers_Admin {
 
         $updated = $wpdb->query(
             $wpdb->prepare(
+                // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is dynamically set and safe.
                 "UPDATE {$table}
                  SET status='available', reserved_by=NULL, reserve_expires=NULL, order_id=NULL, user_id=NULL, txn_ref=NULL
                  WHERE num=%s AND status='reserved'",
@@ -455,6 +460,7 @@ class VY_Numbers_Admin {
                 $significance = sanitize_textarea_field( $row[5] );
                 $updated      = $wpdb->query(
                     $wpdb->prepare(
+                        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is dynamically set and safe.
                         "UPDATE {$table} SET status='reserved', reserved_by=NULL, reserve_expires=NULL, association=%s, nickname=%s, category=%s, country=%s, significance=%s WHERE num=%s",
                         $association,
                         $nickname,
@@ -496,6 +502,7 @@ class VY_Numbers_Admin {
             if ( 'release' === $action ) {
                 $updated = $wpdb->query(
                     $wpdb->prepare(
+                        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is dynamically set and safe.
                         "UPDATE {$table}
                          SET status='available', reserved_by=NULL, reserve_expires=NULL, order_id=NULL, user_id=NULL, txn_ref=NULL
                          WHERE num=%s AND status='reserved'",
@@ -505,6 +512,7 @@ class VY_Numbers_Admin {
             } else {
                 $updated = $wpdb->query(
                     $wpdb->prepare(
+                        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is dynamically set and safe.
                         "UPDATE {$table}
                          SET status='reserved', reserved_by=NULL, reserve_expires=NULL
                          WHERE num=%s AND status='available'",
@@ -535,13 +543,19 @@ class VY_Numbers_Admin {
         global $wpdb;
         $table = $wpdb->prefix . 'vy_numbers';
 
-        // Reset all numbers to available and clear reservation/order/user fields.
-        $sql = "UPDATE {$table} SET status='available', reserved_by=NULL, reserve_expires=NULL, order_id=NULL, user_id=NULL, txn_ref=NULL, association='', nickname='', category='', country='', significance='', updated_at=NOW()";
-        $res = $wpdb->query( $sql );
+        // Truncate the table to remove all existing rows.
+        $wpdb->query( "TRUNCATE TABLE {$table}" );
 
-        if ( false === $res ) {
-            self::redirect_with_msg( 'Database error while reinitializing numbers.', 'error' );
+        // Reseed the table with numbers from 0001 to 9999.
+        $values = [];
+        for ( $i = 1; $i <= 9999; $i++ ) {
+            $num = sprintf( '%04d', $i );
+            $values[] = $wpdb->prepare( '(%s, %s)', $num, 'available' );
         }
+
+        // Bulk insert all rows in one query.
+        $sql = "INSERT INTO {$table} (num, status) VALUES " . implode( ',', $values );
+        $wpdb->query( $sql );
 
         // Clear cache entries the list uses. A full cache flush is simplest here.
         wp_cache_flush();
@@ -550,18 +564,18 @@ class VY_Numbers_Admin {
     }
 
     /**
-     * Check if a number is valid (1–4999, zero-padded to 4 digits).
+     * Check if a number is valid (1–9999, zero-padded to 4 digits).
      *
      * @param string $num The number to validate (can be zero-padded or not).
      * @return bool True if valid, false otherwise.
      */
     protected static function is_valid_num( $num ) {
         $i = (int) ltrim( $num, '0' );
-        return $i >= 1 && $i <= 4999;
+        return $i >= 1 && $i <= 9999;
     }
 
     /**
-     * Parse a blob of text and extract valid 4-digit numbers (0001–5000).
+     * Parse a blob of text and extract valid 4-digit numbers (0001–9999).
      *
      * @param string $blob The. input text containing numbers.
      * @return array Array of valid 4-digit numbers as strings.

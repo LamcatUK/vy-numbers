@@ -48,12 +48,12 @@ class VY_Numbers_REST {
         $num   = $request->get_param( 'num' );
         $table = $wpdb->prefix . 'vy_numbers';
 
-        // make sure num is four digits between 0001 and 5000.
-        if ( ! preg_match( '/^\d{4}$/', $num ) || (int) $num < 1 || (int) $num > 5000 ) {
+        // make sure num is four digits between 0001 and 9999.
+        if ( ! preg_match( '/^\d{4}$/', $num ) || (int) $num < 1 || (int) $num > 9999 ) {
             return new WP_REST_Response(
                 array(
                     'status'  => 'invalid',
-                    'message' => 'Number must be between 0001 and 5000.',
+                    'message' => 'Number must be between 0001 and 9999.',
                 ),
                 400
             );

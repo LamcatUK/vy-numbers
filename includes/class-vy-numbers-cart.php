@@ -82,7 +82,7 @@ class VY_Numbers_Cart {
 
         $num = sanitize_text_field( wp_unslash( $_POST['vy_num'] ) );
         if ( ! self::is_valid_num( $num ) ) {
-            wc_add_notice( 'Please enter a valid 4-digit number between 0001 and 5000.', 'error' );
+            wc_add_notice( 'Please enter a valid 4-digit number between 0001 and 9999.', 'error' );
             return false;
         }
 
@@ -318,7 +318,7 @@ class VY_Numbers_Cart {
             return false;
         }
         $i = (int) $num;
-        return $i >= 1 && $i <= 5000;
+        return $i >= 1 && $i <= 9999;
     }
 
     /**
