@@ -1,6 +1,6 @@
 <?php
 /**
- * VY Numbers – WooCommerce cart + checkout logic
+ * VY Numbers – WooCommerce cart and checkout logic
  *
  * @package VY_Numbers
  */
@@ -13,9 +13,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 // phpcs:disable Generic.PHP.NoSilencedErrors.Discouraged
 
-
 /**
- * Handles WooCommerce cart and checkout logic for VY Numbers.
+ * Handles cart and checkout logic for VY Numbers.
  *
  * Manages number reservation, validation, persistence, and release throughout the cart and order lifecycle.
  */
@@ -38,8 +37,9 @@ class VY_Numbers_Cart {
         // attach the number to the cart item meta.
         add_filter( 'woocommerce_add_cart_item_data', array( __CLASS__, 'add_item_meta' ), 10, 3 );
 
-        // prevent duplicate numbers in the cart.
+        // prevent duplicate numbers in the cart and clean up invalid items.
         add_action( 'woocommerce_before_calculate_totals', array( __CLASS__, 'guard_duplicates' ), 10 );
+        add_action( 'woocommerce_before_calculate_totals', array( __CLASS__, 'clean_invalid_founder_items' ), 5 );
 
         // persist number to order line item.
         add_action( 'woocommerce_checkout_create_order_line_item', array( __CLASS__, 'store_item_meta' ), 10, 4 );
@@ -54,11 +54,22 @@ class VY_Numbers_Cart {
         add_action( 'woocommerce_order_status_failed', array( __CLASS__, 'release_on_order_fail_or_cancel' ), 10, 1 );
         add_action( 'woocommerce_order_status_cancelled', array( __CLASS__, 'release_on_order_fail_or_cancel' ), 10, 1 );
 
-		// send founder flow straight to checkout.
+		// Send founder flow straight to checkout (with loop prevention).
 		add_filter( 'woocommerce_add_to_cart_redirect', array( 'VY_Numbers_Cart', 'redirect_to_checkout' ), 99 );
+
+		// Redirect empty cart to homepage to prevent loops.
+		add_action( 'template_redirect', array( 'VY_Numbers_Cart', 'redirect_empty_cart_to_homepage' ) );
 
 		// hide the default "added to cart" notice for this flow.
 		add_filter( 'wc_add_to_cart_message_html', array( 'VY_Numbers_Cart', 'suppress_added_notice' ), 10, 3 );
+		
+		// Additional suppression for VY Founder product specifically.
+		add_filter( 'woocommerce_add_to_cart_message_html', array( 'VY_Numbers_Cart', 'suppress_founder_notice' ), 10, 3 );
+		
+		// Completely suppress messages for VY Founder product.
+		add_filter( 'wc_add_to_cart_message', array( 'VY_Numbers_Cart', 'suppress_founder_message' ), 10, 2 );
+		
+		// Note: Empty cart redirect filter also removed to prevent loops.
     }
 
     /**
@@ -70,10 +81,20 @@ class VY_Numbers_Cart {
      * @return bool
      */
     public static function reserve_on_add( $passed, $product_id, $quantity ) {
-        unset( $product_id, $quantity );
+        unset( $quantity );
 
+        // Only validate when actually adding new items to cart (not during checkout processing).
         if ( empty( $_POST['vy_num'] ) ) {
-            return $passed; // not our product or no number submitted.
+            // If this is VY Founder product and we're not just processing existing cart items.
+            if ( 134 === (int) $product_id &&
+                ( isset( $_POST['add-to-cart'] ) || isset( $_GET['add-to-cart'] ) ) &&
+                ! doing_action( 'woocommerce_checkout_order_processed' ) &&
+                ! doing_action( 'woocommerce_checkout_create_order' ) &&
+                ! ( isset( $_GET['wc-ajax'] ) && 'checkout' === $_GET['wc-ajax'] ) ) {
+                wc_add_notice( 'Please select a founder number.', 'error' );
+                return false;
+            }
+            return $passed; // Allow for non-founder products or existing items.
         }
 
         // Nonce verification for security.
@@ -146,6 +167,23 @@ class VY_Numbers_Cart {
         }
 
         return $cart_item_data;
+    }
+
+    /**
+     * Remove any VY Founder items (product ID 134) that don't have a founder number.
+     */
+    public static function clean_invalid_founder_items() {
+        if ( empty( WC()->cart ) ) {
+            return;
+        }
+
+        foreach ( WC()->cart->get_cart() as $key => $item ) {
+            // Check if this is a VY Founder product without a founder number.
+            if ( isset( $item['product_id'] ) && 134 === (int) $item['product_id'] && empty( $item['vy_num'] ) ) {
+                // Remove invalid founder item.
+                WC()->cart->remove_cart_item( $key );
+            }
+        }
     }
 
     /**
@@ -399,12 +437,30 @@ class VY_Numbers_Cart {
      * @return string The checkout URL if a founder number was added, otherwise the original URL.
      */
     public static function redirect_to_checkout( $url ) {
-        // only when our 4-digit flow posted successfully.
+        // Only when our 4-digit flow posted successfully.
         $nonce = isset( $_POST['vy_num_nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['vy_num_nonce'] ) ) : '';
         if ( ! empty( $_POST['vy_num'] ) && $nonce && wp_verify_nonce( $nonce, 'vy_num_action' ) ) {
+            // Don't redirect if we're in AJAX.
+            if ( wp_doing_ajax() ) {
+                return $url;
+            }
             return wc_get_checkout_url();
         }
         return $url;
+    }
+
+    /**
+     * Redirect empty cart to homepage to prevent redirect loops.
+     */
+    public static function redirect_empty_cart_to_homepage() {
+        if ( function_exists( 'is_cart' ) && is_cart() && empty( WC()->cart->get_cart() ) ) {
+            wp_safe_redirect( home_url() );
+            exit;
+        }
+        if ( function_exists( 'is_checkout' ) && is_checkout() && empty( WC()->cart->get_cart() ) ) {
+            wp_safe_redirect( home_url() );
+            exit;
+        }
     }
 
     /**
@@ -422,6 +478,61 @@ class VY_Numbers_Cart {
             return '';
         }
         return $message;
+    }
+
+    /**
+     * Suppress "added to cart" notices specifically for VY Founder product (ID 134).
+     *
+     * @param string $message   The default add to cart message.
+     * @param array  $products  The products added to cart.
+     * @param bool   $show_qty  Whether to show quantity.
+     * @return string           The modified message (empty if suppressed).
+     */
+    public static function suppress_founder_notice( $message, $products, $show_qty ) {
+        unset( $show_qty );
+        
+        // Check if VY Founder product (ID 134) was added.
+        if ( is_array( $products ) ) {
+            foreach ( $products as $product_id => $quantity ) {
+                if ( 134 === (int) $product_id ) {
+                    return ''; // Suppress message for VY Founder product.
+                }
+            }
+        }
+        
+        return $message;
+    }
+
+    /**
+     * Suppress "added to cart" message completely for VY Founder product.
+     *
+     * @param string $message     The add to cart message.
+     * @param int    $product_id  The product ID that was added.
+     * @return string             Empty string for VY Founder, original message for others.
+     */
+    public static function suppress_founder_message( $message, $product_id ) {
+        if ( 134 === (int) $product_id ) {
+            return '';
+        }
+        return $message;
+    }
+
+    /**
+     * Prevent WooCommerce from redirecting checkout to cart when founder numbers are present.
+     *
+     * @param bool $redirect Whether to redirect to cart on empty cart.
+     * @return bool False to prevent redirect if founder numbers exist.
+     */
+    public static function prevent_empty_cart_redirect( $redirect ) {
+        // If there are founder numbers in the cart, don't redirect to cart page.
+        if ( function_exists( 'WC' ) && WC()->cart ) {
+            foreach ( WC()->cart->get_cart() as $item ) {
+                if ( ! empty( $item['vy_num'] ) ) {
+                    return false; // Don't redirect, we have founder numbers.
+                }
+            }
+        }
+        return $redirect;
     }
 }
 // phpcs:enable

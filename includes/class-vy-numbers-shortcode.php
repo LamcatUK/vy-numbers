@@ -102,7 +102,7 @@ class VY_Numbers_Shortcode {
         var inputs = root.querySelectorAll('.vy-num-picker__input');
         var statusEl = root.querySelector('.vy-num-picker__status');
         var form = root.querySelector('.vy-num-picker__form');
-        var hidden = form ? form.querySelector('input[name="vy_num"]') : null;
+        var hidden = form ? form.querySelector('input[name="vy_num"]') : root.querySelector('input[name="vy_num"]');
         var btn = root.querySelector('.vy-num-picker__btn');
 
         function getValue(){ var s = ''; inputs.forEach(function(i){ s += (i.value || ''); }); return s; }
@@ -122,9 +122,26 @@ class VY_Numbers_Shortcode {
                 .then(function(r){ return r.json(); })
                 .then(function(data){
                     if ( data && data.status === 'available' ) {
-                        setStatus( 'Number ' + num + ' is available.', true );
-                        if(hidden) hidden.value = num;
-                        if(btn) btn.disabled = false;
+                        // Check if number is already in cart (for checkout page)
+                        var cartNumbers = [];
+                        var cartItems = document.querySelectorAll('.woocommerce-checkout-review-order-table .product-name');
+                        if(cartItems.length > 0) {
+                            cartItems.forEach(function(item) {
+                                var match = item.textContent.match(/VY Founder #(\d{4})/);
+                                if(match) cartNumbers.push(match[1]);
+                            });
+                        }
+                        
+                        if(cartNumbers.includes(num)) {
+                            clearInputsAndFocus();
+                            setStatus( 'Number ' + num + ' is already in your cart.', false );
+                            if(hidden) hidden.value = '';
+                            if(btn) btn.disabled = true;
+                        } else {
+                            setStatus( 'Number ' + num + ' is available.', true );
+                            if(hidden) hidden.value = num;
+                            if(btn) btn.disabled = false;
+                        }
                     } else if (data && data.status === 'reserved' && data.message) {
                         clearInputsAndFocus();
                         setStatus( data.message, false );
@@ -193,8 +210,11 @@ class VY_Numbers_Shortcode {
                         var num = '';
                         checkoutInputs.forEach(function(inp) { num += (inp.value || ''); });
                         if(num.length === 4) {
-                            checkoutBtn.disabled = false;
+                            var padded = padFour(num);
+                            for(var k=0;k<4;k++){ checkoutInputs[k].value = padded[k]; }
+                            checkAvailability(padded); // Use same availability check as regular picker
                         } else {
+                            setStatus('', false);
                             checkoutBtn.disabled = true;
                         }
                     });
@@ -210,13 +230,9 @@ class VY_Numbers_Shortcode {
                     var vyNum = '';
                     inputs.forEach(function(input) { vyNum += (input.value || ''); });
                     
-                    // Also update the hidden field
-                    var hiddenInput = form.querySelector('input[name="vy_num"]');
-                    if (hiddenInput) {
-                        hiddenInput.value = vyNum;
-                    }
-                    
-                    var nonce = form.querySelector('input[name="vy_num_nonce"]').value;
+                    // Find nonce field (might be in a hidden div)
+                    var nonceInput = root.querySelector('input[name="vy_num_nonce"]');
+                    var nonce = nonceInput ? nonceInput.value : '';
                     var productId = checkoutBtn.getAttribute('data-product-id');
                     
                     if(!vyNum || vyNum.length !== 4) {
@@ -231,6 +247,11 @@ class VY_Numbers_Shortcode {
                     formData.append('vy_num_nonce', nonce);
                     formData.append('product_id', productId);
                     
+                    // Prevent double-clicking
+                    if (checkoutBtn.disabled) {
+                        return;
+                    }
+                    
                     checkoutBtn.disabled = true;
                     checkoutBtn.textContent = 'Adding...';
                     
@@ -241,7 +262,12 @@ class VY_Numbers_Shortcode {
                     .then(response => response.json())
                     .then(data => {
                         if(data.success) {
-                            window.location.reload(); // Reload to show new cart item
+                            // Update checkout dynamically instead of reloading
+                            if (typeof jQuery !== 'undefined' && jQuery('body').hasClass('woocommerce-checkout')) {
+                                jQuery('body').trigger('update_checkout');
+                            } else {
+                                window.location.reload(); // Fallback for non-checkout pages
+                            }
                         } else {
                             alert('Error: ' + (data.data || 'Failed to add number'));
                             checkoutBtn.disabled = false;
@@ -316,9 +342,9 @@ JS;
 
             <?php if ( $is_checkout ) : ?>
                 <!-- On checkout page: use AJAX instead of form submission to avoid nested forms -->
-                <?php wp_nonce_field( 'vy_num_action', 'vy_num_nonce' ); ?>
-                <input type="hidden" name="vy_num" value="">
-                <input type="hidden" name="add-to-cart" value="<?php echo esc_attr( $product_id ); ?>">
+                <div style="display: none;">
+                    <?php wp_nonce_field( 'vy_num_action', 'vy_num_nonce' ); ?>
+                </div>
                 <button type="button" class="vy-num-picker__btn button u-button text-uppercase vy-checkout-add" disabled data-product-id="<?php echo esc_attr( $product_id ); ?>">
                     <?php echo esc_html( $atts['button_text'] ); ?>
                 </button>
