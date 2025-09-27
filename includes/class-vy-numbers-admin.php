@@ -386,7 +386,7 @@ class VY_Numbers_Admin {
                 // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is dynamically set and safe.
                 "UPDATE {$table}
                  SET status='available', reserved_by=NULL, reserve_expires=NULL, order_id=NULL, user_id=NULL, txn_ref=NULL
-                 WHERE num=%s AND status='reserved'",
+                 WHERE num=%s AND status IN ('reserved', 'sold')",
                 $num
             )
         );
@@ -395,7 +395,7 @@ class VY_Numbers_Admin {
             self::redirect_with_msg( 'Released ' . $num . '.', 'success' );
         }
 
-        self::redirect_with_msg( 'Nothing to release, or number is sold.', 'error' );
+        self::redirect_with_msg( 'Number is already available or does not exist.', 'error' );
     }
 
     /**
@@ -505,7 +505,7 @@ class VY_Numbers_Admin {
                         // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is dynamically set and safe.
                         "UPDATE {$table}
                          SET status='available', reserved_by=NULL, reserve_expires=NULL, order_id=NULL, user_id=NULL, txn_ref=NULL
-                         WHERE num=%s AND status='reserved'",
+                         WHERE num=%s AND status IN ('reserved', 'sold')",
                         $n
                     )
                 );
