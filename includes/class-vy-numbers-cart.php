@@ -141,6 +141,8 @@ class VY_Numbers_Cart {
         $num = sanitize_text_field( wp_unslash( $_POST['vy_num'] ) );
         if ( self::is_valid_num( $num ) ) {
             $cart_item_data['vy_num'] = $num;
+            // Make each founder number unique in cart by adding the number as a key.
+            $cart_item_data['unique_key'] = 'founder_' . $num;
         }
 
         return $cart_item_data;

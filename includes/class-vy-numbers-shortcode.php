@@ -180,7 +180,85 @@ class VY_Numbers_Shortcode {
     }
 
     document.addEventListener('DOMContentLoaded', function(){
-        document.querySelectorAll('.vy-num-picker').forEach(function(root){ initPicker(root); });
+        document.querySelectorAll('.vy-num-picker').forEach(function(root){ 
+            initPicker(root); 
+            
+            // Handle AJAX submission for checkout page
+            var checkoutBtn = root.querySelector('.vy-checkout-add');
+            if(checkoutBtn) {
+                // Enable checkout button when number is complete and valid
+                var checkoutInputs = root.querySelectorAll('.vy-num-picker__input');
+                checkoutInputs.forEach(function(input) {
+                    input.addEventListener('input', function() {
+                        var num = '';
+                        checkoutInputs.forEach(function(inp) { num += (inp.value || ''); });
+                        if(num.length === 4) {
+                            checkoutBtn.disabled = false;
+                        } else {
+                            checkoutBtn.disabled = true;
+                        }
+                    });
+                });
+                
+                checkoutBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    
+                    var form = root.querySelector('form') || root;
+                    
+                    // Get number from individual digit inputs
+                    var inputs = root.querySelectorAll('.vy-num-picker__input');
+                    var vyNum = '';
+                    inputs.forEach(function(input) { vyNum += (input.value || ''); });
+                    
+                    // Also update the hidden field
+                    var hiddenInput = form.querySelector('input[name="vy_num"]');
+                    if (hiddenInput) {
+                        hiddenInput.value = vyNum;
+                    }
+                    
+                    var nonce = form.querySelector('input[name="vy_num_nonce"]').value;
+                    var productId = checkoutBtn.getAttribute('data-product-id');
+                    
+                    if(!vyNum || vyNum.length !== 4) {
+                        alert('Please enter a valid 4-digit number');
+                        return;
+                    }
+                    
+                    // Submit via AJAX
+                    var formData = new FormData();
+                    formData.append('action', 'add_founder_number_checkout');
+                    formData.append('vy_num', vyNum);
+                    formData.append('vy_num_nonce', nonce);
+                    formData.append('product_id', productId);
+                    
+                    checkoutBtn.disabled = true;
+                    checkoutBtn.textContent = 'Adding...';
+                    
+                    fetch(window.location.origin + '/wp-admin/admin-ajax.php', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if(data.success) {
+                            window.location.reload(); // Reload to show new cart item
+                        } else {
+                            alert('Error: ' + (data.data || 'Failed to add number'));
+                            checkoutBtn.disabled = false;
+                            checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
+                        }
+                    })
+                    .catch(error => {
+                        alert('Error: ' + error.message);
+                        checkoutBtn.disabled = false;
+                        checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
+                    });
+                });
+                
+                // Store original button text
+                checkoutBtn.setAttribute('data-original-text', checkoutBtn.textContent);
+            }
+        });
     });
 })();
 JS;
@@ -221,6 +299,9 @@ JS;
         }
         $add_to_cart_action = add_query_arg( 'add-to-cart', $product_id, $product_url );
 
+        // Check if we're on checkout page to avoid nested forms.
+        $is_checkout = function_exists( 'is_checkout' ) && is_checkout();
+        
         ob_start();
         ?>
         <div class="vy-num-picker" data-add-action="<?php echo esc_url( $add_to_cart_action ); ?>">
@@ -233,13 +314,24 @@ JS;
 
             <div class="vy-num-picker__status" aria-live="polite"></div>
 
-            <form class="vy-num-picker__form" method="post" action="<?php echo esc_url( $add_to_cart_action ); ?>">
-				<?php wp_nonce_field( 'vy_num_action', 'vy_num_nonce' ); ?>
+            <?php if ( $is_checkout ) : ?>
+                <!-- On checkout page: use AJAX instead of form submission to avoid nested forms -->
+                <?php wp_nonce_field( 'vy_num_action', 'vy_num_nonce' ); ?>
                 <input type="hidden" name="vy_num" value="">
-                <button type="submit" class="vy-num-picker__btn button u-button text-uppercase" disabled>
+                <input type="hidden" name="add-to-cart" value="<?php echo esc_attr( $product_id ); ?>">
+                <button type="button" class="vy-num-picker__btn button u-button text-uppercase vy-checkout-add" disabled data-product-id="<?php echo esc_attr( $product_id ); ?>">
                     <?php echo esc_html( $atts['button_text'] ); ?>
                 </button>
-            </form>
+            <?php else : ?>
+                <!-- Regular form submission for non-checkout pages -->
+                <form class="vy-num-picker__form" method="post" action="<?php echo esc_url( $add_to_cart_action ); ?>">
+                    <?php wp_nonce_field( 'vy_num_action', 'vy_num_nonce' ); ?>
+                    <input type="hidden" name="vy_num" value="">
+                    <button type="submit" class="vy-num-picker__btn button u-button text-uppercase" disabled>
+                        <?php echo esc_html( $atts['button_text'] ); ?>
+                    </button>
+                </form>
+            <?php endif; ?>
         </div>
 
         
