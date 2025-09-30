@@ -262,6 +262,23 @@ class VY_Numbers_Shortcode {
                     .then(response => response.json())
                     .then(data => {
                         if(data.success) {
+                            // Clear the input boxes after successful submission
+                            inputs.forEach(function(input) { input.value = ''; });
+                            
+                            // Clear status and disable button
+                            var statusEl = root.querySelector('.vy-num-picker__status');
+                            if(statusEl) {
+                                statusEl.textContent = '';
+                                statusEl.classList.remove('vy-num-picker__status--ok', 'vy-num-picker__status--warn');
+                            }
+                            
+                            // Reset button
+                            checkoutBtn.disabled = true;
+                            checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
+                            
+                            // Focus back to first input for next number
+                            if(inputs[0]) inputs[0].focus();
+                            
                             // Update checkout dynamically instead of reloading
                             if (typeof jQuery !== 'undefined' && jQuery('body').hasClass('woocommerce-checkout')) {
                                 jQuery('body').trigger('update_checkout');
