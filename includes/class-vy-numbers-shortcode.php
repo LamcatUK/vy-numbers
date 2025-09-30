@@ -286,15 +286,41 @@ class VY_Numbers_Shortcode {
                                 window.location.reload(); // Fallback for non-checkout pages
                             }
                         } else {
-                            alert('Error: ' + (data.data || 'Failed to add number'));
-                            checkoutBtn.disabled = false;
+                            // Clear fields if there was an error (like duplicate number)
+                            inputs.forEach(function(input) { input.value = ''; });
+                            
+                            // Clear status
+                            var statusEl = root.querySelector('.vy-num-picker__status');
+                            if(statusEl) {
+                                statusEl.textContent = '';
+                                statusEl.classList.remove('vy-num-picker__status--ok', 'vy-num-picker__status--warn');
+                            }
+                            
+                            // Reset button and focus first input
+                            checkoutBtn.disabled = true;
                             checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
+                            if(inputs[0]) inputs[0].focus();
+                            
+                            alert('Error: ' + (data.data || 'Failed to add number'));
                         }
                     })
                     .catch(error => {
-                        alert('Error: ' + error.message);
-                        checkoutBtn.disabled = false;
+                        // Also clear fields on network/other errors
+                        inputs.forEach(function(input) { input.value = ''; });
+                        
+                        // Clear status
+                        var statusEl = root.querySelector('.vy-num-picker__status');
+                        if(statusEl) {
+                            statusEl.textContent = '';
+                            statusEl.classList.remove('vy-num-picker__status--ok', 'vy-num-picker__status--warn');
+                        }
+                        
+                        // Reset button and focus first input
+                        checkoutBtn.disabled = true;
                         checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
+                        if(inputs[0]) inputs[0].focus();
+                        
+                        alert('Error: ' + error.message);
                     });
                 });
                 
