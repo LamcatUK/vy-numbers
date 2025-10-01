@@ -327,6 +327,28 @@ class VY_Numbers_Shortcode {
                 // Store original button text
                 checkoutBtn.setAttribute('data-original-text', checkoutBtn.textContent);
             }
+            
+            // Handle regular form submission double-click prevention for non-checkout pages
+            var regularForm = root.querySelector('.vy-num-picker__form');
+            if(regularForm) {
+                var regularBtn = regularForm.querySelector('button[type="submit"]');
+                if(regularBtn) {
+                    regularForm.addEventListener('submit', function(e) {
+                        // Prevent double submission
+                        if(regularBtn.disabled) {
+                            e.preventDefault();
+                            return false;
+                        }
+                        
+                        // Disable button immediately to prevent double-click
+                        regularBtn.disabled = true;
+                        regularBtn.textContent = 'Processing...';
+                        
+                        // Allow form to submit normally
+                        return true;
+                    });
+                }
+            }
         });
     });
 })();
