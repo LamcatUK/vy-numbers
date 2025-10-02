@@ -21,7 +21,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 class VY_Numbers_Cart {
 
     /**
-     * Boot hooks.
+     * Get the VY Founder product ID from configuration.
+     *
+     * @return int Product ID.
+     */
+    private static function get_founder_product_id() {
+        return VY_Numbers_Config::get_product_id();
+    }
+
+    /**
+     * Initialize cart hooks.
      */
     public static function init() {
 
@@ -62,13 +71,13 @@ class VY_Numbers_Cart {
 
 		// hide the default "added to cart" notice for this flow.
 		add_filter( 'wc_add_to_cart_message_html', array( 'VY_Numbers_Cart', 'suppress_added_notice' ), 10, 3 );
-		
+
 		// Additional suppression for VY Founder product specifically.
 		add_filter( 'woocommerce_add_to_cart_message_html', array( 'VY_Numbers_Cart', 'suppress_founder_notice' ), 10, 3 );
-		
+
 		// Completely suppress messages for VY Founder product.
 		add_filter( 'wc_add_to_cart_message', array( 'VY_Numbers_Cart', 'suppress_founder_message' ), 10, 2 );
-		
+
 		// Note: Empty cart redirect filter also removed to prevent loops.
     }
 
@@ -86,7 +95,7 @@ class VY_Numbers_Cart {
         // Only validate when actually adding new items to cart (not during checkout processing).
         if ( empty( $_POST['vy_num'] ) ) {
             // If this is VY Founder product and we're not just processing existing cart items.
-            if ( 134 === (int) $product_id &&
+            if ( self::get_founder_product_id() === (int) $product_id &&
                 ( isset( $_POST['add-to-cart'] ) || isset( $_GET['add-to-cart'] ) ) &&
                 ! doing_action( 'woocommerce_checkout_order_processed' ) &&
                 ! doing_action( 'woocommerce_checkout_create_order' ) &&
@@ -116,7 +125,7 @@ class VY_Numbers_Cart {
 
         // attempt atomic reserve if currently available. Use $wpdb->update with an expiry computed in PHP
         // to avoid interpolating table names inside a prepared SQL string.
-        $expires = gmdate( 'Y-m-d H:i:s', time() + 10 ); // Temporary: 10 seconds for testing.
+        $expires = gmdate( 'Y-m-d H:i:s', time() + VY_Numbers_Config::get_reservation_timeout() );
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery WordPress.DB.DirectDatabaseQuery.NoCaching WordPress.DB.PreparedSQL.NotPrepared -- intentional update via $wpdb->update with escaped table
 		$updated = $wpdb->update(
 			$table,
@@ -186,24 +195,24 @@ class VY_Numbers_Cart {
 
         foreach ( WC()->cart->get_cart() as $key => $item ) {
             // Check if this is a VY Founder product without a founder number.
-            if ( isset( $item['product_id'] ) && 134 === (int) $item['product_id'] && empty( $item['vy_num'] ) ) {
+            if ( isset( $item['product_id'] ) && self::get_founder_product_id() === (int) $item['product_id'] && empty( $item['vy_num'] ) ) {
                 // Remove invalid founder item.
                 WC()->cart->remove_cart_item( $key );
                 continue;
             }
-            
+
             // Also check if the number is no longer reserved in database (released via admin).
-            if ( isset( $item['vy_num'] ) && 134 === (int) $item['product_id'] ) {
+            if ( isset( $item['vy_num'] ) && self::get_founder_product_id() === (int) $item['product_id'] ) {
                 $num = $item['vy_num'];
                 if ( self::is_valid_num( $num ) ) {
                     global $wpdb;
                     $table = $wpdb->prefix . 'vy_numbers';
-                    
+
                     // Check current database status.
-                    $safe_table = esc_sql( $table );
-                    $status_sql = sprintf( 'SELECT status FROM `%s` WHERE num = %%s LIMIT 1', $safe_table );
+                    $safe_table     = esc_sql( $table );
+                    $status_sql     = sprintf( 'SELECT status FROM `%s` WHERE num = %%s LIMIT 1', $safe_table );
                     $current_status = $wpdb->get_var( $wpdb->prepare( $status_sql, $num ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared WordPress.DB.DirectDatabaseQuery
-                    
+
                     // If number is available (released via admin), remove from cart.
                     if ( 'available' === $current_status ) {
                         WC()->cart->remove_cart_item( $key );
@@ -222,14 +231,14 @@ class VY_Numbers_Cart {
         }
 
         $seen_numbers = array();
-        
+
         foreach ( WC()->cart->get_cart() as $key => $item ) {
             if ( empty( $item['vy_num'] ) ) {
                 continue;
             }
 
             $num = $item['vy_num'];
-            
+
             // If we've already seen this number, remove this duplicate.
             if ( in_array( $num, $seen_numbers, true ) ) {
                 WC()->cart->remove_cart_item( $key );
@@ -478,7 +487,7 @@ class VY_Numbers_Cart {
             if ( wp_doing_ajax() ) {
                 return $url;
             }
-            
+
             // Check if we actually have VY Founder items in cart before redirecting.
             if ( function_exists( 'WC' ) && WC()->cart ) {
                 foreach ( WC()->cart->get_cart() as $item ) {
@@ -487,7 +496,7 @@ class VY_Numbers_Cart {
                     }
                 }
             }
-            
+
             // If no valid founder items in cart, redirect to homepage to prevent product page.
             return home_url();
         }
@@ -535,7 +544,7 @@ class VY_Numbers_Cart {
      */
     public static function suppress_founder_notice( $message, $products, $show_qty ) {
         unset( $show_qty );
-        
+
         // Check if VY Founder product (ID 134) was added.
         if ( is_array( $products ) ) {
             foreach ( $products as $product_id => $quantity ) {
@@ -544,7 +553,7 @@ class VY_Numbers_Cart {
                 }
             }
         }
-        
+
         return $message;
     }
 

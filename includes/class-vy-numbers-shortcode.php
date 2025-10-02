@@ -47,7 +47,7 @@ class VY_Numbers_Shortcode {
 
         // data for JS.
         wp_register_script( 'vy-numbers-shortcode', '', array(), null, true );
-        
+
         // Get cart numbers for frontend availability checking.
         $cart_numbers = array();
         if ( function_exists( 'WC' ) && WC()->cart ) {
@@ -58,7 +58,7 @@ class VY_Numbers_Shortcode {
                 }
             }
         }
-        
+
         $data = array(
             'restBase'    => esc_url_raw( rest_url( 'vy/v1/number/' ) ),
             'cartNumbers' => $cart_numbers,
@@ -256,6 +256,12 @@ class VY_Numbers_Shortcode {
                     clearInputsAndFocus();
                     setStatus('Number added to your order!', true);
                     
+                    // Reset button state
+                    if(checkoutBtn) {
+                        checkoutBtn.disabled = true;
+                        checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
+                    }
+                    
                     // Trigger checkout update
                     if(typeof jQuery !== 'undefined') {
                         jQuery(document.body).trigger('update_checkout');
@@ -372,10 +378,14 @@ JS;
      * @return string
      */
     public static function render( $atts ) {
-        $atts = shortcode_atts( array(
-            'product_id'  => 134,
-            'button_text' => 'Secure my number',
-        ), $atts, 'vy_number_picker' );
+        $atts = shortcode_atts(
+            array(
+                'product_id'  => VY_Numbers_Config::get_product_id(),
+                'button_text' => VY_Numbers_Config::get_default_button_text(),
+            ),
+            $atts,
+            'vy_number_picker'
+        );
 
         $product_id = absint( $atts['product_id'] );
         $product    = wc_get_product( $product_id );
@@ -397,7 +407,7 @@ JS;
 
         // Check if we're on checkout page to avoid nested forms.
         $is_checkout = function_exists( 'is_checkout' ) && is_checkout();
-        
+
         // Check if there are VY numbers already in the cart.
         $cart_has_numbers = false;
         $cart_count       = 0;
@@ -410,7 +420,7 @@ JS;
                 }
             }
         }
-        
+
         ob_start();
         ?>
         <div class="vy-num-picker" data-add-action="<?php echo esc_url( $add_to_cart_action ); ?>">
@@ -443,7 +453,7 @@ JS;
             <?php endif; ?>
             
             
-            <?php if ( is_front_page() && $cart_has_numbers && class_exists( 'WooCommerce' ) ) : ?>
+            <?php if ( VY_Numbers_Config::show_cart_link() && is_front_page() && $cart_has_numbers && class_exists( 'WooCommerce' ) ) : ?>
                 <?php $cart_url = '/cart/'; // Default cart URL. ?>
                 <div class="vy-num-picker__cart-link" style="margin-top: 15px; text-align: center;">
                     <a href="<?php echo esc_url( $cart_url ); ?>" class="vy-view-cart-link" style="color: #fff; text-decoration: underline; font-size: 18px;">

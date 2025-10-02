@@ -48,7 +48,7 @@ class VY_Numbers_REST {
         $num   = $request->get_param( 'num' );
         $table = $wpdb->prefix . 'vy_numbers';
 
-        // Debug: Log the request
+        // Debug: Log the request.
         error_log( 'VY Numbers API: Checking number ' . $num );
 
         // make sure num is four digits between 0001 and 9999.
@@ -80,7 +80,7 @@ class VY_Numbers_REST {
             );
         }
 
-        // Debug: Log database status
+        // Debug: Log database status.
         error_log( 'VY Numbers API: DB status for ' . $num . ' is ' . $row['status'] );
 
         // if reserved but expired, treat as available.
@@ -97,7 +97,7 @@ class VY_Numbers_REST {
         if ( 'reserved' === $row['status'] || 'available' === $row['status'] ) {
             // Check if cart_numbers parameter was passed from frontend.
             $cart_numbers = $request->get_param( 'cart_numbers' );
-            
+
             if ( ! empty( $cart_numbers ) && is_array( $cart_numbers ) ) {
                 error_log( 'VY Numbers API: Checking against cart numbers: ' . implode( ', ', $cart_numbers ) );
                 if ( in_array( $num, $cart_numbers, true ) ) {
@@ -116,7 +116,7 @@ class VY_Numbers_REST {
                     try {
                         $cart_contents = WC()->cart->get_cart();
                         error_log( 'VY Numbers API: Cart has ' . count( $cart_contents ) . ' items' );
-                        
+
                         if ( ! empty( $cart_contents ) ) {
                             foreach ( $cart_contents as $item ) {
                                 if ( ! empty( $item['vy_num'] ) ) {

@@ -26,6 +26,11 @@ define( 'VY_NUMBERS_URL', plugin_dir_url( __FILE__ ) );
 require_once VY_NUMBERS_PATH . 'includes/class-vy-numbers-installer.php';
 
 /**
+ * Load configuration manager.
+ */
+require_once VY_NUMBERS_PATH . 'includes/class-vy-numbers-config.php';
+
+/**
  * Activation hook — runs once when plugin is activated.
  */
 register_activation_hook( __FILE__, array( 'VY_Numbers_Installer', 'install' ) );
@@ -62,17 +67,6 @@ add_action(
     	// placeholder if you want central init calls.
 	}
 );
-
-// Disabled to prevent redirect loops - handled in VY_Numbers_Cart class
-// add_filter(
-//     'woocommerce_add_to_cart_redirect',
-//     function ( $url ) {
-//         if ( ! empty( $_POST['vy_num'] ) && isset( $_POST['_vy_num_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_vy_num_nonce'] ) ), 'vy_num_action' ) ) {
-//             return wc_get_checkout_url();
-//         }
-//         return $url;
-//     }
-// );
 
 add_filter(
     'wc_add_to_cart_message_html',
