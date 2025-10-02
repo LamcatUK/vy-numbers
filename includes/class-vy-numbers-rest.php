@@ -29,7 +29,7 @@ class VY_Numbers_REST {
             'vy/v1',
             '/number/(?P<num>\d{4})',
             array(
-                'methods'             => 'GET',
+                'methods'             => array( 'GET', 'POST' ),
                 'callback'            => array( __CLASS__, 'check_number' ),
                 'permission_callback' => '__return_true',
             )
@@ -47,6 +47,9 @@ class VY_Numbers_REST {
 
         $num   = $request->get_param( 'num' );
         $table = $wpdb->prefix . 'vy_numbers';
+
+        // Debug: Log the request
+        error_log( 'VY Numbers API: Checking number ' . $num );
 
         // make sure num is four digits between 0001 and 9999.
         if ( ! preg_match( '/^\d{4}$/', $num ) || (int) $num < 1 || (int) $num > 9999 ) {
@@ -77,6 +80,9 @@ class VY_Numbers_REST {
             );
         }
 
+        // Debug: Log database status
+        error_log( 'VY Numbers API: DB status for ' . $num . ' is ' . $row['status'] );
+
         // if reserved but expired, treat as available.
         if (
             'reserved' === $row['status']
@@ -84,6 +90,59 @@ class VY_Numbers_REST {
             && strtotime( $row['reserve_expires'] ) < time()
         ) {
             $row['status'] = 'available';
+            error_log( 'VY Numbers API: Reservation expired, treating as available' );
+        }
+
+        // Check if this number is already in the user's cart.
+        if ( 'reserved' === $row['status'] || 'available' === $row['status'] ) {
+            // Check if cart_numbers parameter was passed from frontend.
+            $cart_numbers = $request->get_param( 'cart_numbers' );
+            
+            if ( ! empty( $cart_numbers ) && is_array( $cart_numbers ) ) {
+                error_log( 'VY Numbers API: Checking against cart numbers: ' . implode( ', ', $cart_numbers ) );
+                if ( in_array( $num, $cart_numbers, true ) ) {
+                    error_log( 'VY Numbers API: Number ' . $num . ' is in cart (frontend)!' );
+                    return new WP_REST_Response(
+                        array(
+                            'status'  => 'in_cart',
+                            'message' => 'This number is already in your cart.',
+                        ),
+                        200
+                    );
+                }
+            } else {
+                // Fallback: Try to check the cart if WooCommerce is available.
+                if ( function_exists( 'WC' ) && WC()->cart ) {
+                    try {
+                        $cart_contents = WC()->cart->get_cart();
+                        error_log( 'VY Numbers API: Cart has ' . count( $cart_contents ) . ' items' );
+                        
+                        if ( ! empty( $cart_contents ) ) {
+                            foreach ( $cart_contents as $item ) {
+                                if ( ! empty( $item['vy_num'] ) ) {
+                                    error_log( 'VY Numbers API: Found cart item with number ' . $item['vy_num'] );
+                                    if ( $item['vy_num'] === $num ) {
+                                        error_log( 'VY Numbers API: Number ' . $num . ' is in cart!' );
+                                        return new WP_REST_Response(
+                                            array(
+                                                'status'  => 'in_cart',
+                                                'message' => 'This number is already in your cart.',
+                                            ),
+                                            200
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    } catch ( Exception $e ) {
+                        // If cart access fails, continue with normal reserved logic.
+                        error_log( 'VY Numbers API: Cart access failed: ' . $e->getMessage() );
+                        // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch
+                    }
+                } else {
+                    error_log( 'VY Numbers API: WooCommerce cart not available' );
+                }
+            }
         }
 
         // Custom logic: if reserved and nickname exists, return custom message.

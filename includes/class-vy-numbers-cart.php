@@ -25,8 +25,8 @@ class VY_Numbers_Cart {
      */
     public static function init() {
 
-		// Disable the replace_existing_founder filter to allow multiple unique numbers in the cart.
-        // add_filter( 'woocommerce_add_to_cart_validation', array( __CLASS__, 'replace_existing_founder' ), 20, 3 );
+        // Prevent duplicate numbers from being added to cart.
+        add_filter( 'woocommerce_add_to_cart_validation', array( __CLASS__, 'prevent_duplicate_founder' ), 20, 3 );
 
 		// belt-and-braces: always force quantity = 1 when a founder number is added.
 		add_filter( 'woocommerce_add_to_cart_quantity', array( __CLASS__, 'force_quantity_one' ), 10, 2 );
@@ -116,7 +116,7 @@ class VY_Numbers_Cart {
 
         // attempt atomic reserve if currently available. Use $wpdb->update with an expiry computed in PHP
         // to avoid interpolating table names inside a prepared SQL string.
-        $expires = gmdate( 'Y-m-d H:i:s', time() + ( 15 * MINUTE_IN_SECONDS ) );
+        $expires = gmdate( 'Y-m-d H:i:s', time() + 10 ); // Temporary: 10 seconds for testing.
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery WordPress.DB.DirectDatabaseQuery.NoCaching WordPress.DB.PreparedSQL.NotPrepared -- intentional update via $wpdb->update with escaped table
 		$updated = $wpdb->update(
 			$table,
@@ -177,31 +177,67 @@ class VY_Numbers_Cart {
             return;
         }
 
+        // Don't run cleanup if we're in the middle of adding an item to cart.
+        if ( doing_action( 'woocommerce_add_to_cart' ) ||
+            doing_action( 'woocommerce_ajax_added_to_cart' ) ||
+            ( isset( $_POST['add-to-cart'] ) && ! empty( $_POST['vy_num'] ) ) ) {
+            return;
+        }
+
         foreach ( WC()->cart->get_cart() as $key => $item ) {
             // Check if this is a VY Founder product without a founder number.
             if ( isset( $item['product_id'] ) && 134 === (int) $item['product_id'] && empty( $item['vy_num'] ) ) {
                 // Remove invalid founder item.
                 WC()->cart->remove_cart_item( $key );
+                continue;
+            }
+            
+            // Also check if the number is no longer reserved in database (released via admin).
+            if ( isset( $item['vy_num'] ) && 134 === (int) $item['product_id'] ) {
+                $num = $item['vy_num'];
+                if ( self::is_valid_num( $num ) ) {
+                    global $wpdb;
+                    $table = $wpdb->prefix . 'vy_numbers';
+                    
+                    // Check current database status.
+                    $safe_table = esc_sql( $table );
+                    $status_sql = sprintf( 'SELECT status FROM `%s` WHERE num = %%s LIMIT 1', $safe_table );
+                    $current_status = $wpdb->get_var( $wpdb->prepare( $status_sql, $num ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared WordPress.DB.DirectDatabaseQuery
+                    
+                    // If number is available (released via admin), remove from cart.
+                    if ( 'available' === $current_status ) {
+                        WC()->cart->remove_cart_item( $key );
+                    }
+                }
             }
         }
     }
 
     /**
-     * Allow multiple unique numbers within the same cart.
+     * Prevent duplicate numbers in the cart - keep only the first instance.
      */
     public static function guard_duplicates() {
-        // No duplicate-checking logic; allow all unique numbers.
         if ( empty( WC()->cart ) ) {
             return;
         }
 
+        $seen_numbers = array();
+        
         foreach ( WC()->cart->get_cart() as $key => $item ) {
             if ( empty( $item['vy_num'] ) ) {
                 continue;
             }
 
-            // Ensure each cart item with a unique vy_num remains.
-            // No removal of duplicates.
+            $num = $item['vy_num'];
+            
+            // If we've already seen this number, remove this duplicate.
+            if ( in_array( $num, $seen_numbers, true ) ) {
+                WC()->cart->remove_cart_item( $key );
+                // Note: No need to release_number() here because the first instance is still in cart.
+            } else {
+                // First time seeing this number, add it to our tracking array.
+                $seen_numbers[] = $num;
+            }
         }
     }
 
@@ -375,16 +411,16 @@ class VY_Numbers_Cart {
 
 
     /**
-     * Replace any existing founder number in the cart with the new one.
+     * Prevent duplicate numbers from being added to cart while allowing multiple unique numbers.
      *
-     * This function ensures that only one founder number is present in the cart at a time.
+     * This function ensures that the same founder number cannot be added twice.
      *
      * @param bool $passed      Whether the product can be added to the cart.
      * @param int  $product_id  (Unused) The ID of the product being added.
      * @param int  $quantity    (Unused) The quantity of the product being added.
      * @return bool
      */
-    public static function replace_existing_founder( $passed, $product_id, $quantity ) {
+    public static function prevent_duplicate_founder( $passed, $product_id, $quantity ) {
         unset( $product_id, $quantity );
         $vy_num_nonce = isset( $_POST['vy_num_nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['vy_num_nonce'] ) ) : '';
         if ( ! $passed || empty( $_POST['vy_num'] ) || empty( WC()->cart ) || empty( $vy_num_nonce ) || ! wp_verify_nonce( $vy_num_nonce, 'vy_num_action' ) ) {
@@ -400,15 +436,13 @@ class VY_Numbers_Cart {
 
 			$old_num = $item['vy_num'];
 
-			// if the same number is already in the cart, keep it and just force qty = 1.
+			// If the same number is already in the cart, don't add it again.
 			if ( $old_num === $new_num ) {
-				WC()->cart->set_quantity( $key, 1 );
-				continue;
+				wc_add_notice( 'This number is already in your cart.', 'notice' );
+				return false; // Prevent adding duplicate.
 			}
 
-			// remove different founder-number items and free their holds.
-			WC()->cart->remove_cart_item( $key );
-			self::release_number( $old_num );
+			// Allow different numbers - don't remove them!
 		}
 
 		return $passed;
@@ -444,7 +478,18 @@ class VY_Numbers_Cart {
             if ( wp_doing_ajax() ) {
                 return $url;
             }
-            return wc_get_checkout_url();
+            
+            // Check if we actually have VY Founder items in cart before redirecting.
+            if ( function_exists( 'WC' ) && WC()->cart ) {
+                foreach ( WC()->cart->get_cart() as $item ) {
+                    if ( isset( $item['product_id'] ) && 134 === (int) $item['product_id'] && ! empty( $item['vy_num'] ) ) {
+                        return wc_get_checkout_url();
+                    }
+                }
+            }
+            
+            // If no valid founder items in cart, redirect to homepage to prevent product page.
+            return home_url();
         }
         return $url;
     }

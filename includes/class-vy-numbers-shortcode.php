@@ -1,40 +1,6 @@
 <?php
 /**
- * VY Numbers – Shortcode: [vy_number_picker product_id="123" button_text="Secure my number"]
- *
- * Shortcode outputs a small 4-digit number picker (4 single-character inputs) and a
- * button to add the selected number to the specified product's add-to-cart flow.
- *
- * Why `product_id`?
- * - The shortcode needs a WooCommerce product to POST the chosen number to. The
- *   `product_id` attribute is used to build an add-to-cart action URL (so the
- *   chosen number is submitted via POST as `vy_num`). If no product_id is given
- *   the shortcode renders nothing for non-admin users.
- *
- * Shortcode attributes:
- * - product_id (int)  : required for normal usage; ID of the WC product to add to cart.
- * - button_text (str) : optional label for the submit button (default: "Secure my number").
- *
- * Behaviour and expectations:
- * - The shortcode enqueues inline CSS and JS. The JS checks availability by calling
- *   the REST endpoint at `wp-json/vy/v1/number/<NNNN>` and expects JSON with a
- *   top-level `status` string: one of 'available', 'reserved', or 'sold'.
- * - When a 4-digit number is available the hidden `vy_num` input is populated and
- *   the button is enabled. If the number is unavailable the inputs are cleared,
- *   focus is returned to the first digit field and a polite status message is shown.
- * - The JS is enqueued via `wp_add_inline_script` (not printed in the shortcode
- *   HTML) specifically to avoid content filters escaping characters (ampersands)
- *   inside the script.
- *
- * Accessibility:
- * - Status messages are written into an element with `aria-live="polite"` and
- *   inputs are grouped with a sensible `aria-label`.
- *
- * Implementation notes:
- * - Server-side expects `vy_num` as a zero-padded 4-digit string (e.g. "0001").
- * - Rapid typing can spawn overlapping availability requests; consider adding
- *   AbortController or request token logic if you see stale responses overriding
- *   newer ones.
+ * VY Numbers – Shortcode for number picker
  *
  * @package VY_Numbers
  */
@@ -44,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Handles the [vy_number_picker] shortcode functionality for VY Numbers.
+ * Handles the VY Numbers shortcode for displaying the number picker interface.
  */
 class VY_Numbers_Shortcode {
 
@@ -81,11 +47,27 @@ class VY_Numbers_Shortcode {
 
         // data for JS.
         wp_register_script( 'vy-numbers-shortcode', '', array(), null, true );
+        
+        // Get cart numbers for frontend availability checking.
+        $cart_numbers = array();
+        if ( function_exists( 'WC' ) && WC()->cart ) {
+            $cart_contents = WC()->cart->get_cart();
+            foreach ( $cart_contents as $item ) {
+                if ( ! empty( $item['vy_num'] ) ) {
+                    $cart_numbers[] = $item['vy_num'];
+                }
+            }
+        }
+        
         $data = array(
-            'restBase' => esc_url_raw( rest_url( 'vy/v1/number/' ) ),
+            'restBase'    => esc_url_raw( rest_url( 'vy/v1/number/' ) ),
+            'cartNumbers' => $cart_numbers,
         );
         wp_add_inline_script( 'vy-numbers-shortcode', 'window.vyNumbersData = ' . wp_json_encode( $data ) . ';' );
         wp_enqueue_script( 'vy-numbers-shortcode' );
+
+        // Add a simple test script to verify JavaScript is loading.
+        wp_add_inline_script( 'vy-numbers-shortcode', 'console.log("VY Numbers script enqueued successfully");', 'after' );
 
         // Inline behaviour script: attach to .vy-num-picker elements after DOM is ready.
         $behavior_js = <<<'JS'
@@ -118,30 +100,36 @@ class VY_Numbers_Shortcode {
             var url = restBase + encodeURIComponent(num);
             if(!url){ setStatus('Service not available.', false); return; }
 
-            fetch(url, { credentials: 'same-origin' })
+            // Get cart numbers from global if available
+            var cartNumbers = [];
+            if (typeof window.vyNumbersData !== 'undefined' && window.vyNumbersData.cartNumbers) {
+                cartNumbers = window.vyNumbersData.cartNumbers;
+            }
+
+            // Prepare fetch body with cart numbers
+            var fetchOptions = { 
+                credentials: 'same-origin',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    cart_numbers: cartNumbers
+                })
+            };
+
+            fetch(url, fetchOptions)
                 .then(function(r){ return r.json(); })
                 .then(function(data){
                     if ( data && data.status === 'available' ) {
-                        // Check if number is already in cart (for checkout page)
-                        var cartNumbers = [];
-                        var cartItems = document.querySelectorAll('.woocommerce-checkout-review-order-table .product-name');
-                        if(cartItems.length > 0) {
-                            cartItems.forEach(function(item) {
-                                var match = item.textContent.match(/VY Founder #(\d{4})/);
-                                if(match) cartNumbers.push(match[1]);
-                            });
-                        }
-                        
-                        if(cartNumbers.includes(num)) {
-                            clearInputsAndFocus();
-                            setStatus( 'Number ' + num + ' is already in your cart.', false );
-                            if(hidden) hidden.value = '';
-                            if(btn) btn.disabled = true;
-                        } else {
-                            setStatus( 'Number ' + num + ' is available.', true );
-                            if(hidden) hidden.value = num;
-                            if(btn) btn.disabled = false;
-                        }
+                        setStatus( 'Number ' + num + ' is available.', true );
+                        if(hidden) hidden.value = num;
+                        if(btn) btn.disabled = false;
+                    } else if (data && data.status === 'in_cart') {
+                        clearInputsAndFocus();
+                        setStatus( data.message || 'This number is already in your cart.', false );
+                        if(hidden) hidden.value = '';
+                        if(btn) btn.disabled = true;
                     } else if (data && data.status === 'reserved' && data.message) {
                         clearInputsAndFocus();
                         setStatus( data.message, false );
@@ -168,20 +156,30 @@ class VY_Numbers_Shortcode {
                 var v = input.value;
                 if(v.length > 1){
                     var digits = v.replace(/\D/g,'').slice(0, 4);
-                    for(var i=0;i<digits.length && (idx + i) < inputs.length;i++){ inputs[idx + i].value = digits[i]; }
-                } else {
-                    if(!onlyDigit(v)){ input.value=''; return; }
+                    for(var i=0;i<digits.length && (idx + i) < inputs.length;i++){
+                        inputs[idx + i].value = digits[i];
+                    }
                 }
-                for(var j=idx;j<inputs.length;j++){
-                    if(inputs[j].value === ''){ inputs[j].focus(); break; }
-                    if(j === inputs.length - 1){ input.blur(); }
-                }
+
+                if(!onlyDigit(v)){ input.value = ''; }
+                if(v.length === 1 && (idx + 1) < inputs.length){ inputs[idx + 1].focus(); }
+
                 var num = getValue();
-                if(num.length === 4){ var padded = padFour(num); for(var k=0;k<4;k++){ inputs[k].value = padded[k]; } checkAvailability(padded); } else { setStatus('', false); if(btn) btn.disabled = true; }
+                if(num.length === 4){
+                    var padded = padFour(num);
+                    for(var k=0;k<4;k++){ inputs[k].value = padded[k]; }
+                    checkAvailability(padded);
+                } else {
+                    setStatus('', false);
+                    if(hidden) hidden.value = '';
+                    if(btn) btn.disabled = true;
+                }
             });
 
             input.addEventListener('keydown', function(e){
-                if(e.key === 'Backspace' && input.value === '' && idx > 0){ inputs[idx-1].focus(); inputs[idx-1].value = ''; e.preventDefault(); setStatus('', false); if(btn) btn.disabled = true; }
+                if(e.key === 'Backspace' && !input.value && idx > 0){
+                    inputs[idx - 1].focus();
+                }
                 if(e.key && e.key.length === 1 && !/[0-9]/.test(e.key)){ e.preventDefault(); }
             });
 
@@ -194,124 +192,81 @@ class VY_Numbers_Shortcode {
                 if(num.length === 4){ var padded = padFour(num); for(var k=0;k<4;k++){ inputs[k].value = padded[k]; } checkAvailability(padded); if(inputs[3]) inputs[3].blur(); }
             });
         });
-    }
 
-    document.addEventListener('DOMContentLoaded', function(){
-        document.querySelectorAll('.vy-num-picker').forEach(function(root){ 
-            initPicker(root); 
-            
-            // Handle AJAX submission for checkout page
-            var checkoutBtn = root.querySelector('.vy-checkout-add');
-            if(checkoutBtn) {
-                // Enable checkout button when number is complete and valid
-                var checkoutInputs = root.querySelectorAll('.vy-num-picker__input');
-                checkoutInputs.forEach(function(input) {
-                    input.addEventListener('input', function() {
-                        var num = '';
-                        checkoutInputs.forEach(function(inp) { num += (inp.value || ''); });
-                        if(num.length === 4) {
-                            var padded = padFour(num);
-                            for(var k=0;k<4;k++){ checkoutInputs[k].value = padded[k]; }
-                            checkAvailability(padded); // Use same availability check as regular picker
-                        } else {
-                            setStatus('', false);
-                            checkoutBtn.disabled = true;
-                        }
-                    });
+        // Handle AJAX submission for checkout page
+        var checkoutBtn = root.querySelector('.vy-checkout-add');
+        if(checkoutBtn) {
+            // Enable checkout button when number is complete and valid
+            var checkoutInputs = root.querySelectorAll('.vy-num-picker__input');
+            checkoutInputs.forEach(function(input) {
+                input.addEventListener('input', function() {
+                    var num = '';
+                    checkoutInputs.forEach(function(inp) { num += (inp.value || ''); });
+                    if(num.length === 4) {
+                        var padded = padFour(num);
+                        for(var k=0;k<4;k++){ checkoutInputs[k].value = padded[k]; }
+                        checkAvailability(padded);
+                    } else {
+                        setStatus('', false);
+                        checkoutBtn.disabled = true;
+                    }
                 });
+            });
+            
+            checkoutBtn.addEventListener('click', function(e) {
+                e.preventDefault();
                 
-                checkoutBtn.addEventListener('click', function(e) {
-                    e.preventDefault();
+                // Get number from individual digit inputs
+                var inputs = root.querySelectorAll('.vy-num-picker__input');
+                var vyNum = '';
+                inputs.forEach(function(input) { vyNum += (input.value || ''); });
+                
+                // Find nonce field (might be in a hidden div)
+                var nonceInput = root.querySelector('input[name="vy_num_nonce"]');
+                var nonce = nonceInput ? nonceInput.value : '';
+                
+                if(!vyNum || vyNum.length !== 4) {
+                    alert('Please enter a complete 4-digit number.');
+                    return;
+                }
+                
+                // Show loading state
+                checkoutBtn.disabled = true;
+                checkoutBtn.textContent = 'Adding to Cart...';
+                
+                // Prepare form data
+                var formData = new FormData();
+                formData.append('action', 'woocommerce_add_to_cart');
+                formData.append('product_id', checkoutBtn.getAttribute('data-product-id') || '134');
+                formData.append('quantity', '1');
+                formData.append('vy_num', vyNum);
+                formData.append('vy_num_nonce', nonce);
+                
+                // Submit via AJAX
+                fetch(window.wc_add_to_cart_params ? window.wc_add_to_cart_params.wc_ajax_url.replace('%%endpoint%%', 'add_to_cart') : '/wp-admin/admin-ajax.php', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'same-origin'
+                })
+                .then(function(response) {
+                    return response.text();
+                })
+                .then(function(data) {
+                    // Clear inputs and show success message
+                    clearInputsAndFocus();
+                    setStatus('Number added to your order!', true);
                     
-                    var form = root.querySelector('form') || root;
-                    
-                    // Get number from individual digit inputs
-                    var inputs = root.querySelectorAll('.vy-num-picker__input');
-                    var vyNum = '';
-                    inputs.forEach(function(input) { vyNum += (input.value || ''); });
-                    
-                    // Find nonce field (might be in a hidden div)
-                    var nonceInput = root.querySelector('input[name="vy_num_nonce"]');
-                    var nonce = nonceInput ? nonceInput.value : '';
-                    var productId = checkoutBtn.getAttribute('data-product-id');
-                    
-                    if(!vyNum || vyNum.length !== 4) {
-                        alert('Please enter a valid 4-digit number');
-                        return;
+                    // Trigger checkout update
+                    if(typeof jQuery !== 'undefined') {
+                        jQuery(document.body).trigger('update_checkout');
                     }
-                    
-                    // Submit via AJAX
-                    var formData = new FormData();
-                    formData.append('action', 'add_founder_number_checkout');
-                    formData.append('vy_num', vyNum);
-                    formData.append('vy_num_nonce', nonce);
-                    formData.append('product_id', productId);
-                    
-                    // Prevent double-clicking
-                    if (checkoutBtn.disabled) {
-                        return;
-                    }
-                    
-                    checkoutBtn.disabled = true;
-                    checkoutBtn.textContent = 'Adding...';
-                    
-                    fetch(window.location.origin + '/wp-admin/admin-ajax.php', {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if(data.success) {
-                            // Clear the input boxes after successful submission
-                            inputs.forEach(function(input) { input.value = ''; });
-                            
-                            // Clear status and disable button
-                            var statusEl = root.querySelector('.vy-num-picker__status');
-                            if(statusEl) {
-                                statusEl.textContent = '';
-                                statusEl.classList.remove('vy-num-picker__status--ok', 'vy-num-picker__status--warn');
-                            }
-                            
-                            // Reset button
-                            checkoutBtn.disabled = true;
-                            checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
-                            
-                            // Focus back to first input for next number
-                            if(inputs[0]) inputs[0].focus();
-                            
-                            // Update checkout dynamically instead of reloading
-                            if (typeof jQuery !== 'undefined' && jQuery('body').hasClass('woocommerce-checkout')) {
-                                jQuery('body').trigger('update_checkout');
-                            } else {
-                                window.location.reload(); // Fallback for non-checkout pages
-                            }
-                        } else {
-                            // Clear fields if there was an error (like duplicate number)
-                            inputs.forEach(function(input) { input.value = ''; });
-                            
-                            // Clear status
-                            var statusEl = root.querySelector('.vy-num-picker__status');
-                            if(statusEl) {
-                                statusEl.textContent = '';
-                                statusEl.classList.remove('vy-num-picker__status--ok', 'vy-num-picker__status--warn');
-                            }
-                            
-                            // Reset button and focus first input
-                            checkoutBtn.disabled = true;
-                            checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
-                            if(inputs[0]) inputs[0].focus();
-                            
-                            alert('Error: ' + (data.data || 'Failed to add number'));
-                        }
-                    })
-                    .catch(error => {
-                        // Also clear fields on network/other errors
-                        inputs.forEach(function(input) { input.value = ''; });
-                        
-                        // Clear status
+                })
+                .catch(function(error) {
+                    // Clear inputs and reset button on error
+                    clearInputsAndFocus();
+                    if(checkoutBtn) {
                         var statusEl = root.querySelector('.vy-num-picker__status');
                         if(statusEl) {
-                            statusEl.textContent = '';
                             statusEl.classList.remove('vy-num-picker__status--ok', 'vy-num-picker__status--warn');
                         }
                         
@@ -321,22 +276,76 @@ class VY_Numbers_Shortcode {
                         if(inputs[0]) inputs[0].focus();
                         
                         alert('Error: ' + error.message);
-                    });
+                    }
                 });
-                
-                // Store original button text
-                checkoutBtn.setAttribute('data-original-text', checkoutBtn.textContent);
-            }
+            });
+            
+            // Store original button text
+            checkoutBtn.setAttribute('data-original-text', checkoutBtn.textContent);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function(){
+        console.log('VY Numbers JavaScript loaded');
+        var pickers = document.querySelectorAll('.vy-num-picker');
+        console.log('Found', pickers.length, 'number pickers');
+        
+        pickers.forEach(function(root){ 
+            console.log('Initializing picker:', root);
+            initPicker(root); 
             
             // Handle regular form submission double-click prevention for non-checkout pages
             var regularForm = root.querySelector('.vy-num-picker__form');
+            console.log('Found regular form:', regularForm);
             if(regularForm) {
                 var regularBtn = regularForm.querySelector('button[type="submit"]');
+                
                 if(regularBtn) {
-                    regularForm.addEventListener('submit', function(e) {
-                        // Prevent double submission
+                    // Add submit prevention directly on the button click too
+                    regularBtn.addEventListener('click', function(e) {
+                        // Check if button is disabled
                         if(regularBtn.disabled) {
                             e.preventDefault();
+                            e.stopPropagation();
+                            console.log('Button click prevented - button disabled');
+                            return false;
+                        }
+                        
+                        // Check status for errors
+                        var statusEl = root.querySelector('.vy-num-picker__status');
+                        if(statusEl && (statusEl.textContent.toLowerCase().includes('already in your cart') || statusEl.classList.contains('vy-num-picker__status--warn'))) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log('Button click prevented - error status detected');
+                            return false;
+                        }
+                    });
+                    
+                    regularForm.addEventListener('submit', function(e) {
+                        console.log('Form submit event triggered');
+                        
+                        // Prevent submission if button is disabled
+                        if(regularBtn.disabled) {
+                            e.preventDefault();
+                            e.stopImmediatePropagation();
+                            console.log('Form submit prevented - button disabled');
+                            return false;
+                        }
+                        
+                        // Check if status shows "already in your cart"
+                        var statusEl = root.querySelector('.vy-num-picker__status');
+                        if(statusEl && statusEl.textContent.toLowerCase().includes('already in your cart')) {
+                            e.preventDefault();
+                            e.stopImmediatePropagation();
+                            console.log('Form submit prevented - already in cart status');
+                            return false;
+                        }
+                        
+                        // Check if status shows any error (warn class)
+                        if(statusEl && statusEl.classList.contains('vy-num-picker__status--warn')) {
+                            e.preventDefault();
+                            e.stopImmediatePropagation();
+                            console.log('Form submit prevented - status shows warning');
                             return false;
                         }
                         
@@ -344,7 +353,7 @@ class VY_Numbers_Shortcode {
                         regularBtn.disabled = true;
                         regularBtn.textContent = 'Processing...';
                         
-                        // Allow form to submit normally
+                        console.log('Form submit allowed');
                         return true;
                     });
                 }
@@ -363,24 +372,20 @@ JS;
      * @return string
      */
     public static function render( $atts ) {
-        $atts = shortcode_atts(
-            array(
-                'product_id'  => '',
-                'button_text' => 'Secure my number',
-            ),
-            $atts,
-            'vy_number_picker'
-        );
+        $atts = shortcode_atts( array(
+            'product_id'  => 134,
+            'button_text' => 'Secure my number',
+        ), $atts, 'vy_number_picker' );
 
-        $product_id = (int) $atts['product_id'];
-        if ( $product_id <= 0 ) {
+        $product_id = absint( $atts['product_id'] );
+        $product    = wc_get_product( $product_id );
+        if ( ! $product || ! $product->exists() ) {
             if ( current_user_can( 'manage_options' ) ) {
-                return '<p><strong>VY Numbers:</strong> Please provide a valid <code>product_id</code> to the shortcode.</p>';
+                return '<p><strong>VY Numbers:</strong> Product not found for <code>product_id=' . esc_html( $product_id ) . '</code>.</p>';
             }
             return '';
         }
 
-        // Build a product add-to-cart URL to POST against (keeps vy_num in POST, not query).
         $product_url = get_permalink( $product_id );
         if ( ! $product_url ) {
             if ( current_user_can( 'manage_options' ) ) {
