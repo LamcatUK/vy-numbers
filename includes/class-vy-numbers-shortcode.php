@@ -398,6 +398,19 @@ JS;
         // Check if we're on checkout page to avoid nested forms.
         $is_checkout = function_exists( 'is_checkout' ) && is_checkout();
         
+        // Check if there are VY numbers already in the cart.
+        $cart_has_numbers = false;
+        $cart_count       = 0;
+        if ( function_exists( 'WC' ) && WC()->cart ) {
+            $cart_contents = WC()->cart->get_cart();
+            foreach ( $cart_contents as $item ) {
+                if ( ! empty( $item['vy_num'] ) ) {
+                    $cart_has_numbers = true;
+                    ++$cart_count;
+                }
+            }
+        }
+        
         ob_start();
         ?>
         <div class="vy-num-picker" data-add-action="<?php echo esc_url( $add_to_cart_action ); ?>">
@@ -427,6 +440,16 @@ JS;
                         <?php echo esc_html( $atts['button_text'] ); ?>
                     </button>
                 </form>
+            <?php endif; ?>
+            
+            
+            <?php if ( is_front_page() && $cart_has_numbers && class_exists( 'WooCommerce' ) ) : ?>
+                <?php $cart_url = '/cart/'; // Default cart URL. ?>
+                <div class="vy-num-picker__cart-link" style="margin-top: 15px; text-align: center;">
+                    <a href="<?php echo esc_url( $cart_url ); ?>" class="vy-view-cart-link" style="color: #fff; text-decoration: underline; font-size: 18px;">
+                        View cart
+                    </a>
+                </div>
             <?php endif; ?>
         </div>
 
