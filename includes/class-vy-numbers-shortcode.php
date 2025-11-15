@@ -81,6 +81,8 @@ class VY_Numbers_Shortcode {
 
     function initPicker(root){
         if(!root) return;
+        // avoid double init
+        if(root.dataset.vyInit) return;
         var inputs = root.querySelectorAll('.vy-num-picker__input');
         var statusEl = root.querySelector('.vy-num-picker__status');
         var form = root.querySelector('.vy-num-picker__form');
@@ -100,13 +102,11 @@ class VY_Numbers_Shortcode {
             var url = restBase + encodeURIComponent(num);
             if(!url){ setStatus('Service not available.', false); return; }
 
-            // Get cart numbers from global if available
             var cartNumbers = [];
             if (typeof window.vyNumbersData !== 'undefined' && window.vyNumbersData.cartNumbers) {
                 cartNumbers = window.vyNumbersData.cartNumbers;
             }
 
-            // Prepare fetch body with cart numbers
             var fetchOptions = { 
                 credentials: 'same-origin',
                 method: 'POST',
@@ -289,83 +289,41 @@ class VY_Numbers_Shortcode {
             // Store original button text
             checkoutBtn.setAttribute('data-original-text', checkoutBtn.textContent);
         }
+
+        // mark initialised
+        root.dataset.vyInit = '1';
     }
 
-    document.addEventListener('DOMContentLoaded', function(){
-        console.log('VY Numbers JavaScript loaded');
+    function scanAndInit(){
         var pickers = document.querySelectorAll('.vy-num-picker');
-        console.log('Found', pickers.length, 'number pickers');
-        
-        pickers.forEach(function(root){ 
-            console.log('Initializing picker:', root);
-            initPicker(root); 
-            
-            // Handle regular form submission double-click prevention for non-checkout pages
-            var regularForm = root.querySelector('.vy-num-picker__form');
-            console.log('Found regular form:', regularForm);
-            if(regularForm) {
-                var regularBtn = regularForm.querySelector('button[type="submit"]');
-                
-                if(regularBtn) {
-                    // Add submit prevention directly on the button click too
-                    regularBtn.addEventListener('click', function(e) {
-                        // Check if button is disabled
-                        if(regularBtn.disabled) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log('Button click prevented - button disabled');
-                            return false;
-                        }
-                        
-                        // Check status for errors
-                        var statusEl = root.querySelector('.vy-num-picker__status');
-                        if(statusEl && (statusEl.textContent.toLowerCase().includes('already in your cart') || statusEl.classList.contains('vy-num-picker__status--warn'))) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            console.log('Button click prevented - error status detected');
-                            return false;
-                        }
-                    });
-                    
-                    regularForm.addEventListener('submit', function(e) {
-                        console.log('Form submit event triggered');
-                        
-                        // Prevent submission if button is disabled
-                        if(regularBtn.disabled) {
-                            e.preventDefault();
-                            e.stopImmediatePropagation();
-                            console.log('Form submit prevented - button disabled');
-                            return false;
-                        }
-                        
-                        // Check if status shows "already in your cart"
-                        var statusEl = root.querySelector('.vy-num-picker__status');
-                        if(statusEl && statusEl.textContent.toLowerCase().includes('already in your cart')) {
-                            e.preventDefault();
-                            e.stopImmediatePropagation();
-                            console.log('Form submit prevented - already in cart status');
-                            return false;
-                        }
-                        
-                        // Check if status shows any error (warn class)
-                        if(statusEl && statusEl.classList.contains('vy-num-picker__status--warn')) {
-                            e.preventDefault();
-                            e.stopImmediatePropagation();
-                            console.log('Form submit prevented - status shows warning');
-                            return false;
-                        }
-                        
-                        // Disable button immediately to prevent double-click
-                        regularBtn.disabled = true;
-                        regularBtn.textContent = 'Processing...';
-                        
-                        console.log('Form submit allowed');
-                        return true;
-                    });
-                }
+        pickers.forEach(function(root){
+            // initialize only if not already
+            if(!root.dataset.vyInit){
+                initPicker(root);
             }
         });
+    }
+
+    // Initialise once DOM is ready
+    if(document.readyState === 'loading'){
+        document.addEventListener('DOMContentLoaded', scanAndInit);
+    } else {
+        scanAndInit();
+    }
+
+    // If theme exposes a checkout-ready event (vy:checkout-ready), re-scan when it's fired.
+    document.addEventListener('vy:checkout-ready', function(){
+        // small delay to allow any theme-side mutations to complete
+        setTimeout(scanAndInit, 50);
     });
+
+    // If the theme already exposed the global form, ensure pickers are initialised
+    if(window.vy_regular_form){
+        setTimeout(scanAndInit, 0);
+    }
+
+    // lightweight log for debugging only
+    try{ console.log('VY Numbers JavaScript loaded (pickers found):', document.querySelectorAll('.vy-num-picker').length); } catch(e){}
 })();
 JS;
         wp_add_inline_script( 'vy-numbers-shortcode', $behavior_js );
