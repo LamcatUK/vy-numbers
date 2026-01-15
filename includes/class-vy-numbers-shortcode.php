@@ -425,7 +425,186 @@ JS;
         <?php
         return ob_get_clean();
     }
+
+    /**
+     * Renders the founder profile page shortcode.
+     * [vy_founder_profile]
+     *
+     * @return string HTML output.
+     */
+    public static function render_founder_profile() {
+        // Enqueue styles and scripts inline (no external files needed initially).
+        ob_start();
+
+        if ( ! VY_Numbers_Auth::is_verified() ) {
+            // Show authentication form.
+            ?>
+            <div class="vy-founder-auth" style="max-width:500px;margin:2rem auto;padding:2rem;background:#f5f5f5;border-radius:8px;">
+                <h2 style="margin-top:0;">Founder Access</h2>
+                <p>Enter your founder number and password to access your profile.</p>
+                <form class="vy-founder-auth__form" id="vy-founder-auth-form" style="display:flex;flex-direction:column;gap:1rem;">
+                    <div>
+                        <label for="vy-founder-number" style="display:block;margin-bottom:0.5rem;font-weight:bold;">Founder Number</label>
+                        <input type="text" id="vy-founder-number" name="number" maxlength="4" pattern="\d{4}" placeholder="0001" required style="width:100%;padding:0.5rem;font-size:1rem;" />
+                    </div>
+                    <div>
+                        <label for="vy-founder-password" style="display:block;margin-bottom:0.5rem;font-weight:bold;">Password</label>
+                        <input type="password" id="vy-founder-password" name="password" required style="width:100%;padding:0.5rem;font-size:1rem;" />
+                        <small style="display:block;margin-top:0.25rem;color:#666;">Default password is your founder number (e.g., 0001)</small>
+                    </div>
+                    <div class="vy-founder-auth__error" id="vy-auth-error" style="display:none;color:#d32f2f;padding:0.5rem;background:#fee;border-radius:4px;"></div>
+                    <button type="submit" class="vy-founder-auth__submit button" style="padding:0.75rem 1.5rem;font-size:1rem;cursor:pointer;">Login</button>
+                </form>
+            </div>
+            <script>
+            jQuery(document).ready(function($) {
+                $('#vy-founder-auth-form').on('submit', function(e) {
+                    e.preventDefault();
+                    var number = $('#vy-founder-number').val();
+                    var password = $('#vy-founder-password').val();
+                    var errorEl = $('#vy-auth-error');
+
+                    $.ajax({
+                        url: '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>',
+                        type: 'POST',
+                        data: {
+                            action: 'vy_verify_founder',
+                            nonce: '<?php echo esc_js( wp_create_nonce( 'vy_founder_auth' ) ); ?>',
+                            number: number,
+                            password: password
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                location.reload();
+                            } else {
+                                errorEl.text(response.data.message).show();
+                            }
+                        },
+                        error: function() {
+                            errorEl.text('An error occurred. Please try again.').show();
+                        }
+                    });
+                });
+            });
+            </script>
+            <?php
+        } else {
+            // User is verified, show profile.
+            $founder_number = VY_Numbers_Auth::get_verified_number();
+            
+            global $wpdb;
+            $table = $wpdb->prefix . 'vy_numbers';
+            
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+            $profile = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE num = %s", $founder_number ) );
+
+            if ( $profile ) {
+                ?>
+                <div class="vy-founder-profile" style="max-width:800px;margin:2rem auto;">
+                    <div class="vy-founder-profile__header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;">
+                        <h1 style="margin:0;">Founder #<?php echo esc_html( $founder_number ); ?></h1>
+                        <button class="vy-founder-logout button" id="vy-founder-logout" style="cursor:pointer;">Logout</button>
+                    </div>
+
+                    <div class="vy-founder-profile__details" style="background:#f5f5f5;padding:2rem;border-radius:8px;margin-bottom:2rem;">
+                        <h2 style="margin-top:0;">Profile</h2>
+                        <div style="display:grid;gap:1rem;">
+                            <div class="vy-profile-field">
+                                <strong>Name:</strong>
+                                <span><?php echo esc_html( trim( ( $profile->first_name ?? '' ) . ' ' . ( $profile->last_name ?? '' ) ) ?: 'Not set' ); ?></span>
+                            </div>
+                            <div class="vy-profile-field">
+                                <strong>Association:</strong>
+                                <span><?php echo esc_html( $profile->association ?? 'Not set' ); ?></span>
+                            </div>
+                            <div class="vy-profile-field">
+                                <strong>Nickname:</strong>
+                                <span><?php echo esc_html( $profile->nickname ?? 'Not set' ); ?></span>
+                            </div>
+                            <div class="vy-profile-field">
+                                <strong>Category:</strong>
+                                <span><?php echo esc_html( $profile->category ?? 'Not set' ); ?></span>
+                            </div>
+                            <div class="vy-profile-field">
+                                <strong>Country:</strong>
+                                <span><?php echo esc_html( $profile->country ?? 'Not set' ); ?></span>
+                            </div>
+                            <div class="vy-profile-field">
+                                <strong>Founder Date:</strong>
+                                <span><?php echo esc_html( $profile->founder_date ?? 'Not set' ); ?></span>
+                            </div>
+                            <?php if ( ! empty( $profile->significance ) ) : ?>
+                                <div class="vy-profile-field">
+                                    <strong>Significance:</strong>
+                                    <p style="margin:0.5rem 0 0 0;"><?php echo esc_html( $profile->significance ); ?></p>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div class="vy-founder-profile__orders" style="background:#f5f5f5;padding:2rem;border-radius:8px;">
+                        <h2 style="margin-top:0;">Purchase History</h2>
+                        <?php
+                        // Get orders for this founder number.
+                        $orders = wc_get_orders( array(
+                            'meta_key'   => '_vy_num',
+                            'meta_value' => $founder_number,
+                            'limit'      => -1,
+                        ) );
+
+                        if ( ! empty( $orders ) ) :
+                            ?>
+                            <table class="vy-orders-table" style="width:100%;border-collapse:collapse;">
+                                <thead>
+                                    <tr style="border-bottom:2px solid #ddd;">
+                                        <th style="text-align:left;padding:0.5rem;">Order</th>
+                                        <th style="text-align:left;padding:0.5rem;">Date</th>
+                                        <th style="text-align:left;padding:0.5rem;">Status</th>
+                                        <th style="text-align:left;padding:0.5rem;">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ( $orders as $order ) : ?>
+                                        <tr style="border-bottom:1px solid #eee;">
+                                            <td style="padding:0.5rem;"><a href="<?php echo esc_url( $order->get_view_order_url() ); ?>">#<?php echo esc_html( $order->get_order_number() ); ?></a></td>
+                                            <td style="padding:0.5rem;"><?php echo esc_html( $order->get_date_created()->date_i18n( wc_date_format() ) ); ?></td>
+                                            <td style="padding:0.5rem;"><?php echo esc_html( wc_get_order_status_name( $order->get_status() ) ); ?></td>
+                                            <td style="padding:0.5rem;"><?php echo wp_kses_post( $order->get_formatted_order_total() ); ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        <?php else : ?>
+                            <p>No orders found.</p>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <script>
+                jQuery(document).ready(function($) {
+                    $('#vy-founder-logout').on('click', function() {
+                        $.ajax({
+                            url: '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>',
+                            type: 'POST',
+                            data: {
+                                action: 'vy_founder_logout',
+                                nonce: '<?php echo esc_js( wp_create_nonce( 'vy_founder_auth' ) ); ?>'
+                            },
+                            success: function() {
+                                location.reload();
+                            }
+                        });
+                    });
+                });
+                </script>
+                <?php
+            } else {
+                echo '<p>Profile not found.</p>';
+            }
+        }
+
+        return ob_get_clean();
+    }
 }
 
-// boot it.
-VY_Numbers_Shortcode::init();
+// Register the founder profile shortcode.
+add_shortcode( 'vy_founder_profile', array( 'VY_Numbers_Shortcode', 'render_founder_profile' ) );

@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class VY_Numbers_Installer {
 
-    const DB_VERSION = '1.0.1';
+    const DB_VERSION = '1.0.6';
 
     /**
      * Run on plugin activation.
@@ -40,6 +40,20 @@ class VY_Numbers_Installer {
             category VARCHAR(64) NULL,
             country VARCHAR(64) NULL,
             significance TEXT NULL,
+            first_name VARCHAR(128) NULL,
+            last_name VARCHAR(128) NULL,
+            password_hash VARCHAR(255) NULL,
+            founder_date DATE NULL,
+            profile_picture_url VARCHAR(512) NULL,
+            city VARCHAR(128) NULL,
+            state VARCHAR(128) NULL,
+            profession VARCHAR(255) NULL,
+            bio TEXT NULL,
+            social_handles TEXT NULL,
+            instagram VARCHAR(255) NULL,
+            twitter VARCHAR(255) NULL,
+            linkedin VARCHAR(255) NULL,
+            website VARCHAR(255) NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),

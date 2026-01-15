@@ -36,6 +36,16 @@ require_once VY_NUMBERS_PATH . 'includes/class-vy-numbers-config.php';
 register_activation_hook( __FILE__, array( 'VY_Numbers_Installer', 'install' ) );
 
 /**
+ * Flush rewrite rules on activation to register the /founder/[number] URLs.
+ */
+register_activation_hook(
+	__FILE__,
+	function () {
+		flush_rewrite_rules();
+	}
+);
+
+/**
  * Ensure db schema is current every time plugin loads.
  */
 add_action( 'plugins_loaded', array( 'VY_Numbers_Installer', 'maybe_upgrade' ) );
@@ -50,6 +60,7 @@ foreach ( array(
     'class-vy-numbers-cron.php',
     'class-vy-numbers-admin.php',
     'class-vy-numbers-shortcode.php',
+    'class-vy-numbers-auth.php',
 ) as $file ) {
     $include_path = VY_NUMBERS_PATH . 'includes/' . $file;
     if ( file_exists( $include_path ) ) {
@@ -64,8 +75,68 @@ foreach ( array(
 add_action(
 	'init',
 	function () {
-    	// placeholder if you want central init calls.
+		// Initialize the shortcode
+		if ( class_exists( 'VY_Numbers_Shortcode' ) ) {
+			VY_Numbers_Shortcode::init();
+		}
+		
+		// Add rewrite rule for /founder/[number] URLs.
+		add_rewrite_rule(
+			'^founder/(\d{4})/?$',
+			'index.php?pagename=founder&founder_num=$matches[1]',
+			'top'
+		);
 	}
+);
+
+/**
+ * Add founder_num query var.
+ */
+add_filter(
+	'query_vars',
+	function ( $vars ) {
+		$vars[] = 'founder_num';
+		return $vars;
+	}
+);
+
+/**
+ * Set default password when a founder number is purchased.
+ */
+add_action(
+    'woocommerce_order_status_completed',
+    function ( $order_id ) {
+        $order = wc_get_order( $order_id );
+        if ( ! $order ) {
+            return;
+        }
+
+        // Check if this order has a founder number.
+        $founder_number = $order->get_meta( '_vy_num', true );
+        if ( empty( $founder_number ) ) {
+            return;
+        }
+
+        // Check if password is already set.
+        if ( VY_Numbers_Auth::has_password( $founder_number ) ) {
+            return;
+        }
+
+        // Set default password to the founder number itself.
+        VY_Numbers_Auth::set_password( $founder_number, $founder_number );
+
+        // Set the founder date to today.
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_numbers';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update(
+            $table,
+            array( 'founder_date' => current_time( 'Y-m-d' ) ),
+            array( 'num' => $founder_number ),
+            array( '%s' ),
+            array( '%s' )
+        );
+    }
 );
 
 add_filter(
