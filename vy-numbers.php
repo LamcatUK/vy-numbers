@@ -51,6 +51,22 @@ register_activation_hook(
 add_action( 'plugins_loaded', array( 'VY_Numbers_Installer', 'maybe_upgrade' ) );
 
 /**
+ * One-time rewrite flush for staging deployment.
+ * This will run once on the next page load, then remove itself.
+ */
+add_action(
+	'init',
+	function () {
+		$flush_done = get_option( 'vy_numbers_rewrite_flushed_v2', false );
+		if ( ! $flush_done ) {
+			flush_rewrite_rules();
+			update_option( 'vy_numbers_rewrite_flushed_v2', true );
+		}
+	},
+	999
+);
+
+/**
  * Autoload the rest of our classes.
  * (you can swap this for a proper PSR-4 autoloader later if you want)
  */
