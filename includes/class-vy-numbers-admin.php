@@ -1121,7 +1121,7 @@ class VY_Numbers_Admin {
         <div class="wrap">
             <h1>Edit Founder Profile: <?php echo esc_html( $num ); ?></h1>
             
-            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
                 <?php wp_nonce_field( 'vy_numbers_update_profile' ); ?>
                 <input type="hidden" name="action" value="vy_numbers_update_profile" />
                 <input type="hidden" name="num" value="<?php echo esc_attr( $num ); ?>" />
@@ -1171,6 +1171,23 @@ class VY_Numbers_Admin {
                     <tr>
                         <th scope="row"><label for="founder_date">Founder Date</label></th>
                         <td><input type="date" id="founder_date" name="founder_date" value="<?php echo esc_attr( $row->founder_date ?? '' ); ?>" class="regular-text" /></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="profile_picture">Profile Picture</label></th>
+                        <td>
+                            <?php if ( ! empty( $row->profile_picture_url ) ) : ?>
+                                <img src="<?php echo esc_url( $row->profile_picture_url ); ?>" style="max-width: 200px; max-height: 200px; display: block; margin-bottom: 10px;" alt="Current profile picture" />
+                                <p class="description">Current profile picture</p>
+                            <?php endif; ?>
+                            <input type="file" id="profile_picture" name="profile_picture" accept="image/jpeg,image/jpg,image/png" />
+                            <p class="description">Upload a JPG or PNG image. Leave empty to keep current picture.</p>
+                            <?php if ( ! empty( $row->profile_picture_url ) ) : ?>
+                                <label>
+                                    <input type="checkbox" name="remove_profile_picture" value="1" />
+                                    Remove current profile picture
+                                </label>
+                            <?php endif; ?>
+                        </td>
                     </tr>
                     <tr>
                         <th scope="row"><label for="significance">Significance</label></th>
@@ -1289,30 +1306,46 @@ class VY_Numbers_Admin {
         global $wpdb;
         $table = $wpdb->prefix . 'vy_numbers';
 
+        // Prepare update data
+        $update_data = array(
+            'first_name'   => $first_name,
+            'last_name'    => $last_name,
+            'association'  => $association,
+            'nickname'     => $nickname,
+            'category'     => $category,
+            'country'      => $country,
+            'city'         => $city,
+            'state'        => $state,
+            'profession'   => $profession,
+            'founder_date' => $founder_date,
+            'significance' => $significance,
+            'bio'          => $bio,
+            'instagram'    => $instagram,
+            'twitter'      => $twitter,
+            'linkedin'     => $linkedin,
+            'website'      => $website,
+        );
+        $format = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' );
+
+        // Handle profile picture upload
+        if ( isset( $_POST['remove_profile_picture'] ) ) {
+            $update_data['profile_picture_url'] = null;
+            $format[] = '%s';
+        } elseif ( ! empty( $_FILES['profile_picture']['name'] ) ) {
+            $upload = self::handle_profile_picture_upload( $_FILES['profile_picture'] );
+            if ( ! is_wp_error( $upload ) ) {
+                $update_data['profile_picture_url'] = $upload['url'];
+                $format[] = '%s';
+            }
+        }
+
         // Update profile fields.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.DirectQuery
         $updated = $wpdb->update(
             $table,
-            array(
-                'first_name'   => $first_name,
-                'last_name'    => $last_name,
-                'association'  => $association,
-                'nickname'     => $nickname,
-                'category'     => $category,
-                'country'      => $country,
-                'city'         => $city,
-                'state'        => $state,
-                'profession'   => $profession,
-                'founder_date' => $founder_date,
-                'significance' => $significance,
-                'bio'          => $bio,
-                'instagram'    => $instagram,
-                'twitter'      => $twitter,
-                'linkedin'     => $linkedin,
-                'website'      => $website,
-            ),
+            $update_data,
             array( 'num' => $num ),
-            array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+            $format,
             array( '%s' )
         );
 
