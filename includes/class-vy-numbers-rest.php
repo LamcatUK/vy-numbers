@@ -34,6 +34,31 @@ class VY_Numbers_REST {
                 'permission_callback' => '__return_true',
             )
         );
+
+        // Endpoint to generate fresh nonce for cart operations.
+        register_rest_route(
+            'vy/v1',
+            '/nonce',
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( __CLASS__, 'get_nonce' ),
+                'permission_callback' => '__return_true',
+            )
+        );
+    }
+
+    /**
+     * Generate a fresh nonce for vy_num_action.
+     *
+     * @return WP_REST_Response
+     */
+    public static function get_nonce() {
+        return new WP_REST_Response(
+            array(
+                'nonce' => wp_create_nonce( 'vy_num_action' ),
+            ),
+            200
+        );
     }
 
     /**

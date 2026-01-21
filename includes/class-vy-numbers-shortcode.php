@@ -61,6 +61,7 @@ class VY_Numbers_Shortcode {
 
         $data = array(
             'restBase'    => esc_url_raw( rest_url( 'vy/v1/number/' ) ),
+            'nonceUrl'    => esc_url_raw( rest_url( 'vy/v1/nonce' ) ),
             'cartNumbers' => $cart_numbers,
         );
         wp_add_inline_script( 'vy-numbers-shortcode', 'window.vyNumbersData = ' . wp_json_encode( $data ) . ';' );
@@ -193,6 +194,63 @@ class VY_Numbers_Shortcode {
             });
         });
 
+        // Handle regular form submission (non-checkout pages) - fetch fresh nonce before submit
+        if(form) {
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                // Check if nonce URL is available
+                var nonceUrl = (typeof window.vyNumbersData !== 'undefined' ? window.vyNumbersData.nonceUrl : '');
+                if(!nonceUrl) {
+                    // Fallback: submit without fetching nonce if URL not available
+                    form.submit();
+                    return;
+                }
+                
+                // Disable button to prevent double submission
+                if(btn) {
+                    btn.disabled = true;
+                    btn.textContent = 'Processing...';
+                }
+                
+                // Fetch fresh nonce
+                fetch(nonceUrl, {
+                    method: 'GET',
+                    credentials: 'same-origin'
+                })
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    if(data && data.nonce) {
+                        // Update nonce field
+                        var nonceField = form.querySelector('input[name="vy_num_nonce"]');
+                        if(nonceField) {
+                            nonceField.value = data.nonce;
+                        }
+                        // Submit the form
+                        form.submit();
+                    } else {
+                        if(btn) {
+                            btn.disabled = false;
+                            btn.textContent = btn.getAttribute('data-original-text') || 'Secure my number';
+                        }
+                        setStatus('Error getting security token. Please refresh the page.', false);
+                    }
+                })
+                .catch(function(error) {
+                    if(btn) {
+                        btn.disabled = false;
+                        btn.textContent = btn.getAttribute('data-original-text') || 'Secure my number';
+                    }
+                    setStatus('Error: ' + error.message + '. Please try again.', false);
+                });
+            });
+            
+            // Store original button text
+            if(btn) {
+                btn.setAttribute('data-original-text', btn.textContent);
+            }
+        }
+
         // Handle AJAX submission for checkout page
         var checkoutBtn = root.querySelector('.vy-checkout-add');
         if(checkoutBtn) {
@@ -221,10 +279,6 @@ class VY_Numbers_Shortcode {
                 var vyNum = '';
                 inputs.forEach(function(input) { vyNum += (input.value || ''); });
                 
-                // Find nonce field (might be in a hidden div)
-                var nonceInput = root.querySelector('input[name="vy_num_nonce"]');
-                var nonce = nonceInput ? nonceInput.value : '';
-                
                 if(!vyNum || vyNum.length !== 4) {
                     alert('Please enter a complete 4-digit number.');
                     return;
@@ -234,56 +288,95 @@ class VY_Numbers_Shortcode {
                 checkoutBtn.disabled = true;
                 checkoutBtn.textContent = 'Adding to Cart...';
                 
-                // Prepare form data
-                var formData = new FormData();
-                formData.append('action', 'woocommerce_add_to_cart');
-                formData.append('product_id', checkoutBtn.getAttribute('data-product-id') || '134');
-                formData.append('quantity', '1');
-                formData.append('vy_num', vyNum);
-                formData.append('vy_num_nonce', nonce);
+                // Get nonce URL
+                var nonceUrl = (typeof window.vyNumbersData !== 'undefined' ? window.vyNumbersData.nonceUrl : '');
                 
-                // Submit via AJAX
-                fetch(window.wc_add_to_cart_params ? window.wc_add_to_cart_params.wc_ajax_url.replace('%%endpoint%%', 'add_to_cart') : '/wp-admin/admin-ajax.php', {
-                    method: 'POST',
-                    body: formData,
-                    credentials: 'same-origin'
-                })
-                .then(function(response) {
-                    return response.text();
-                })
-                .then(function(data) {
-                    // Clear inputs and show success message
-                    clearInputsAndFocus();
-                    setStatus('Number added to your order!', true);
+                // Function to submit with nonce
+                var submitWithNonce = function(nonce) {
+                    // Prepare form data
+                    var formData = new FormData();
+                    formData.append('action', 'woocommerce_add_to_cart');
+                    formData.append('product_id', checkoutBtn.getAttribute('data-product-id') || '134');
+                    formData.append('quantity', '1');
+                    formData.append('vy_num', vyNum);
+                    formData.append('vy_num_nonce', nonce);
                     
-                    // Reset button state
-                    if(checkoutBtn) {
-                        checkoutBtn.disabled = true;
-                        checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
-                    }
-                    
-                    // Trigger checkout update
-                    if(typeof jQuery !== 'undefined') {
-                        jQuery(document.body).trigger('update_checkout');
-                    }
-                })
-                .catch(function(error) {
-                    // Clear inputs and reset button on error
-                    clearInputsAndFocus();
-                    if(checkoutBtn) {
-                        var statusEl = root.querySelector('.vy-num-picker__status');
-                        if(statusEl) {
-                            statusEl.classList.remove('vy-num-picker__status--ok', 'vy-num-picker__status--warn');
+                    // Submit via AJAX
+                    fetch(window.wc_add_to_cart_params ? window.wc_add_to_cart_params.wc_ajax_url.replace('%%endpoint%%', 'add_to_cart') : '/wp-admin/admin-ajax.php', {
+                        method: 'POST',
+                        body: formData,
+                        credentials: 'same-origin'
+                    })
+                    .then(function(response) {
+                        return response.text();
+                    })
+                    .then(function(data) {
+                        // Clear inputs and show success message
+                        clearInputsAndFocus();
+                        setStatus('Number added to your order!', true);
+                        
+                        // Reset button state
+                        if(checkoutBtn) {
+                            checkoutBtn.disabled = true;
+                            checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
                         }
                         
-                        // Reset button and focus first input
-                        checkoutBtn.disabled = true;
+                        // Trigger checkout update
+                        if(typeof jQuery !== 'undefined') {
+                            jQuery(document.body).trigger('update_checkout');
+                        }
+                    })
+                    .catch(function(error) {
+                        // Clear inputs and reset button on error
+                        clearInputsAndFocus();
+                        if(checkoutBtn) {
+                            var statusEl = root.querySelector('.vy-num-picker__status');
+                            if(statusEl) {
+                                statusEl.classList.remove('vy-num-picker__status--ok', 'vy-num-picker__status--warn');
+                            }
+                            
+                            // Reset button and focus first input
+                            checkoutBtn.disabled = true;
+                            checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
+                            if(inputs[0]) inputs[0].focus();
+                            
+                            alert('Error: ' + error.message);
+                        }
+                    });
+                };
+                
+                // Fetch fresh nonce if URL available, otherwise use existing nonce
+                if(nonceUrl) {
+                    fetch(nonceUrl, {
+                        method: 'GET',
+                        credentials: 'same-origin'
+                    })
+                    .then(function(response) { return response.json(); })
+                    .then(function(data) {
+                        if(data && data.nonce) {
+                            // Update nonce field for future reference
+                            var nonceInput = root.querySelector('input[name="vy_num_nonce"]');
+                            if(nonceInput) {
+                                nonceInput.value = data.nonce;
+                            }
+                            submitWithNonce(data.nonce);
+                        } else {
+                            checkoutBtn.disabled = false;
+                            checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
+                            setStatus('Error getting security token. Please refresh the page.', false);
+                        }
+                    })
+                    .catch(function(error) {
+                        checkoutBtn.disabled = false;
                         checkoutBtn.textContent = checkoutBtn.getAttribute('data-original-text') || 'Add Another Number';
-                        if(inputs[0]) inputs[0].focus();
-                        
-                        alert('Error: ' + error.message);
-                    }
-                });
+                        setStatus('Error: ' + error.message + '. Please try again.', false);
+                    });
+                } else {
+                    // Fallback: use existing nonce if URL not available
+                    var nonceInput = root.querySelector('input[name="vy_num_nonce"]');
+                    var nonce = nonceInput ? nonceInput.value : '';
+                    submitWithNonce(nonce);
+                }
             });
             
             // Store original button text
